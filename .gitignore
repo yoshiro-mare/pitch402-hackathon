@@ -7,3 +7,5 @@ cache
 broadcast
 contracts/lib
 *.key
+*.tsbuildinfo
+next-env.d.ts
