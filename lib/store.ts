@@ -1,4 +1,11 @@
-import { SPOTS_PER_CYCLE, TERM_MULTIPLIERS, TIERS, type Term } from '@/config/pitch402.config'
+import { randomUUID } from 'node:crypto'
+import {
+  SPOTS_PER_CYCLE,
+  TERM_MULTIPLIERS,
+  TIERS,
+  USDC_DECIMALS,
+  type Term,
+} from '@/config/pitch402.config'
 
 /**
  * In-memory inventory for the MVP. One demo cycle, 100 empty spots.
@@ -12,9 +19,20 @@ export type SoldSpot = {
   amount: string
   term: Term
   trackUri: string
-  buyer: string
+  buyer: string | null
   addedAt: string
   receiptId: string
+}
+
+export type Receipt = SoldSpot & {
+  id: string
+  playlistId: string
+  cycle: number
+  currency: 'USDC'
+  decimals: number
+  /** how the payment was settled: a real x402 payment, or the demo shortcut */
+  paymentMethod: 'x402' | 'fake'
+  paymentReference: string | null
 }
 
 export type Playlist = {
@@ -30,19 +48,33 @@ export type Playlist = {
   sold: SoldSpot[]
 }
 
-const demo: Playlist = {
-  id: 'demo',
-  name: 'Pitch402 Demo Cycle',
-  curator: 'demo-curator',
-  spotifyPlaylistId: null,
-  spotifyFollowers: null,
-  cycle: 1,
-  status: 'open',
-  spotsPerCycle: SPOTS_PER_CYCLE,
-  sold: [],
+function seed(): { playlists: Map<string, Playlist>; receipts: Map<string, Receipt> } {
+  const demo: Playlist = {
+    id: 'demo',
+    name: 'Pitch402 Demo Cycle',
+    curator: 'demo-curator',
+    spotifyPlaylistId: null,
+    spotifyFollowers: null,
+    cycle: 1,
+    status: 'open',
+    spotsPerCycle: SPOTS_PER_CYCLE,
+    sold: [],
+  }
+  return { playlists: new Map([[demo.id, demo]]), receipts: new Map() }
 }
 
-const playlists = new Map<string, Playlist>([[demo.id, demo]])
+/**
+ * Held on globalThis on purpose. Next bundles each route handler separately,
+ * so a plain module-level Map gives every route its own copy and a spot bought
+ * through POST stays invisible to the quote and receipt routes. Dies on restart
+ * — real persistence arrives with the contract.
+ */
+const globalForStore = globalThis as unknown as {
+  __pitch402Store?: ReturnType<typeof seed>
+}
+
+const state = (globalForStore.__pitch402Store ??= seed())
+const playlists = state.playlists
 
 export function listPlaylists(): Playlist[] {
   return [...playlists.values()]
@@ -66,6 +98,71 @@ export function nextFreeSpot(playlist: Playlist): number | null {
 
 export function spotsRemaining(playlist: Playlist): number {
   return playlist.spotsPerCycle - playlist.sold.length
+}
+
+const receipts = state.receipts
+
+export function getReceipt(id: string): Receipt | undefined {
+  return receipts.get(id)
+}
+
+export type SellInput = {
+  spot: number
+  /** price snapshotted at purchase, in USDC's smallest unit */
+  amountAtomic: string
+  amount: string
+  term: Term
+  trackUri: string
+  buyer: string | null
+  paymentMethod: 'x402' | 'fake'
+  paymentReference: string | null
+}
+
+/**
+ * Take a spot. Rejects if the spot was claimed in the meantime, so the caller
+ * always re-checks rather than trusting an earlier quote. The price passed in
+ * is the snapshot: it is stored as paid and never recomputed afterwards.
+ */
+export function sellSpot(playlist: Playlist, input: SellInput): Receipt {
+  if (isTaken(playlist, input.spot)) {
+    throw new SpotTakenError(input.spot)
+  }
+
+  const receiptId = `rcpt_${randomUUID().replace(/-/g, '')}`
+  const sold: SoldSpot = {
+    spot: input.spot,
+    amountAtomic: input.amountAtomic,
+    amount: input.amount,
+    term: input.term,
+    trackUri: input.trackUri,
+    buyer: input.buyer,
+    addedAt: new Date().toISOString(),
+    receiptId,
+  }
+  playlist.sold.push(sold)
+  if (spotsRemaining(playlist) === 0) {
+    playlist.status = 'full'
+  }
+
+  const receipt: Receipt = {
+    ...sold,
+    id: receiptId,
+    playlistId: playlist.id,
+    cycle: playlist.cycle,
+    currency: 'USDC',
+    decimals: USDC_DECIMALS,
+    paymentMethod: input.paymentMethod,
+    paymentReference: input.paymentReference,
+  }
+  receipts.set(receiptId, receipt)
+  return receipt
+}
+
+export class SpotTakenError extends Error {
+  constructor(public readonly spot: number) {
+    super(`spot ${spot} is already taken`)
+    this.name = 'SpotTakenError'
+  }
 }
 
 /** Tier ladder and term multipliers as served to agents. */

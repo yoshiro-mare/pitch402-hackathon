@@ -19,6 +19,19 @@ export type Price = {
   amountAtomic: string
 }
 
+/** Snake-case shape served to agents, so every endpoint prices identically. */
+export function serializePrice(price: Price) {
+  return {
+    currency: price.currency,
+    decimals: price.decimals,
+    tier_base: price.base,
+    term: price.term,
+    multiplier: price.multiplier,
+    amount: price.amount,
+    amount_atomic: price.amountAtomic,
+  }
+}
+
 /** Parse a decimal string like "2.5" into USDC's smallest unit. */
 export function toAtomic(decimalAmount: string, decimals = USDC_DECIMALS): bigint {
   const match = /^(\d+)(?:\.(\d+))?$/.exec(decimalAmount.trim())

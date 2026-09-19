@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { DEFAULT_TERM, PAYMENT, isValidTerm } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
 import { getPlaylist, isTaken, nextFreeSpot } from '@/lib/store'
-import { priceFor } from '@/lib/pricing'
+import { priceFor, serializePrice } from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         available: false,
         reason: 'spot_taken',
         next_free_spot: next,
-        next_price: next ? priceFor(next, termParam) : null,
+        next_price: next ? serializePrice(priceFor(next, termParam)) : null,
         next_action: next
           ? {
               method: 'POST',
