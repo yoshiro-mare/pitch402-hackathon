@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { Hex } from 'viem'
-import { connect, explain, injected, payingFetch, usdcBalance, WalletError } from './wallet'
+import { connect, EXPLORER, explain, injected, payingFetch, settlementTx, usdcBalance, WalletError } from './wallet'
+import HandToAgent from './HandToAgent'
 
 type Tier = { from: number; to: number; price: string }
 
@@ -73,6 +74,7 @@ type Challenge = {
 }
 
 type TrackInfo = {
+  uri: string
   name: string
   artist: string
   album: string
@@ -104,6 +106,8 @@ export default function Home() {
   const [balance, setBalance] = useState<number | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [paying, setPaying] = useState(false)
+  const [showAgent, setShowAgent] = useState(false)
+  const [tx, setTx] = useState<string | null>(null)
   const hasWallet = typeof window !== 'undefined' && injected() !== null
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -199,6 +203,7 @@ export default function Home() {
     setError(null)
     setChallenge(null)
     setReceipt(null)
+    setTx(null)
     try {
       const price = String(Number(priceOf(selected)) * multiplier)
       const res = await payingFetch(wallet, price)(
@@ -216,7 +221,25 @@ export default function Home() {
         if (next) setSpot(String(next))
       } else {
         setReceipt(data)
+        // Settlement runs after the response, so the hash is in this header and
+        // the receipt's own `settled` flag is still false at this instant.
+        setTx(settlementTx(res))
         setBalance(await usdcBalance(wallet))
+
+        // Re-read the receipt once settlement has had a moment to land, so the
+        // panel ends up showing what the server recorded rather than what we
+        // hoped for.
+        setTimeout(async () => {
+          try {
+            const fresh = await fetch(data.receipt_url).then((r) => (r.ok ? r.json() : null))
+            if (fresh) {
+              setReceipt(fresh)
+              if (fresh.payment?.reference) setTx(fresh.payment.reference)
+            }
+          } catch {
+            // The receipt we already have is still correct about the purchase.
+          }
+        }, 4000)
       }
       await load()
     } catch (err) {
@@ -359,10 +382,26 @@ export default function Home() {
             <button type="submit" disabled={paying || busy} style={S.button}>
               {paying ? 'Waiting for your wallet…' : wallet ? `Buy spot ${selected} — ${selectedTotal}` : 'Connect wallet & buy'}
             </button>
-            <button type="button" onClick={requestPayment} disabled={busy || paying} style={S.buttonGhost}>
-              {busy ? 'Requesting…' : 'Inspect the 402'}
+            <button type="button" onClick={() => setShowAgent((v) => !v)} style={S.buttonGhost}>
+              {showAgent ? 'Hide' : 'Hand this to an agent'}
+            </button>
+            <button type="button" onClick={requestPayment} disabled={busy || paying} style={S.buttonGhostQuiet}>
+              {busy ? 'Requesting…' : 'Raw 402'}
             </button>
           </div>
+
+          {showAgent && (
+            <HandToAgent
+              order={{
+                base: typeof window === 'undefined' ? '' : window.location.origin,
+                playlist: 'demo',
+                spot: selected,
+                term,
+                trackUri: trackInfo?.uri ?? track,
+                price: String(Number(priceOf(selected)) * multiplier),
+              }}
+            />
+          )}
 
           {wallet ? (
             <p style={S.fine}>
@@ -391,7 +430,7 @@ export default function Home() {
               <Row k="Amount" v={`${receipt.amount_paid} ${receipt.currency} (${receipt.term})`} />
               <Row k="Track" v={receipt.track ? `${receipt.track.name} — ${receipt.track.artist}` : receipt.track_uri} />
               <Row k="Network" v={receipt.payment.network_name} />
-              <Row k="Settled" v={String(receipt.payment.settled)} />
+              <Row k="Settled" v={receipt.payment.settled ? 'yes, onchain' : 'confirming…'} />
               <Row
                 k="Spotify"
                 v={
@@ -401,6 +440,15 @@ export default function Home() {
                 }
               />
             </dl>
+            {tx && (
+              <p style={S.fine}>
+                <a href={`${EXPLORER}/tx/${tx}`} target="_blank" rel="noreferrer" style={S.txLink}>
+                  View the USDC transfer on Basescan ↗
+                </a>
+                <br />
+                <code style={S.txHash}>{tx}</code>
+              </p>
+            )}
             <p style={S.fine}>
               <a href={receipt.receipt_url} target="_blank" rel="noreferrer">Receipt</a>
               {receipt.spotify.playlist_url && (
@@ -555,8 +603,11 @@ const S: Record<string, React.CSSProperties> = {
   fine: { margin: 0, fontSize: '.75rem', color: '#777', lineHeight: 1.45 },
   actions: { display: 'flex', gap: '.5rem', flexWrap: 'wrap' },
   buttonGhost: { padding: '.6rem .9rem', borderRadius: '.45rem', border: '1px solid #cbd5e1', background: '#fff', color: '#334155', fontSize: '.82rem', cursor: 'pointer' },
+  buttonGhostQuiet: { padding: '.6rem .7rem', borderRadius: '.45rem', border: '1px solid transparent', background: 'transparent', color: '#94a3b8', fontSize: '.78rem', cursor: 'pointer' },
   paid: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: '.85rem' },
   warn: { color: '#b45309', fontWeight: 600 },
+  txLink: { color: '#047857', fontWeight: 600 },
+  txHash: { fontSize: '.66rem', color: '#94a3b8', wordBreak: 'break-all' },
   trackCard: { display: 'flex', gap: '.7rem', alignItems: 'center', padding: '.55rem', borderRadius: '.5rem', border: '1px solid #e2e8f0', background: '#fff', textDecoration: 'none', color: 'inherit' },
   art: { borderRadius: '.3rem', objectFit: 'cover', flex: '0 0 auto' },
   artFallback: { width: 56, height: 56, display: 'grid', placeItems: 'center', background: '#f1f5f9', color: '#94a3b8', fontSize: '1.4rem' },

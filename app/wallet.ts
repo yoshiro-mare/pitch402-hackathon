@@ -17,7 +17,7 @@ import { createPublicClient, createWalletClient, custom, http, type Hex } from '
 import { baseSepolia } from 'viem/chains'
 import { toClientEvmSigner } from '@x402/evm'
 import { registerExactEvmScheme } from '@x402/evm/exact/client'
-import { x402Client, wrapFetchWithPayment } from '@x402/fetch'
+import { x402Client, wrapFetchWithPayment, decodePaymentResponseHeader } from '@x402/fetch'
 
 export const BASE_SEPOLIA_CAIP2 = 'eip155:84532'
 export const BASE_SEPOLIA_HEX = '0x14a34'
@@ -136,4 +136,24 @@ export function explain(err: unknown): string {
   const e = err as { code?: number; shortMessage?: string; message?: string }
   if (e?.code === 4001) return 'You rejected the signature in your wallet.'
   return e?.shortMessage ?? e?.message ?? 'Payment failed.'
+}
+
+export const EXPLORER = 'https://sepolia.basescan.org'
+
+/**
+ * The settlement transaction hash.
+ *
+ * Settlement runs after the handler returns, so the hash cannot be in the JSON
+ * body — it arrives in this header instead. Cross-origin callers can read it
+ * because the middleware names it in access-control-expose-headers.
+ */
+export function settlementTx(res: Response): string | null {
+  const header = res.headers.get('payment-response')
+  if (!header) return null
+  try {
+    const decoded = decodePaymentResponseHeader(header) as { transaction?: string } | null
+    return decoded?.transaction ?? null
+  } catch {
+    return null
+  }
 }
