@@ -54,7 +54,7 @@ export function acceptEntry(network: NetworkConfig, price: Price, payTo: string 
     ...(network.settlement === 'unavailable'
       ? {
           settlement_note:
-            'Advertised for network coverage. No x402 facilitator is confirmed for this chain, so a payment here cannot be settled yet — use demo (fake) pay, or pay on base-sepolia.',
+            'Advertised for network coverage. No x402 facilitator is confirmed for this chain, so a payment here cannot be settled yet — pay on base-sepolia instead.',
         }
       : {}),
   }

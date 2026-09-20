@@ -37,12 +37,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       network_name: networkFor(receipt.network).name,
       chain: networkFor(receipt.network).chain,
       settled: receipt.settled,
-      note:
-        receipt.paymentMethod === 'fake'
-          ? `DEMO ONLY. No ${receipt.currency} moved and nothing was settled onchain (${networkFor(receipt.network).name}).`
-          : receipt.settled
-            ? `Settled via x402 on ${networkFor(receipt.network).name}.`
-            : 'Verified by the x402 facilitator; settlement not confirmed yet.',
+      note: receipt.settled
+        ? `Settled via x402 on ${networkFor(receipt.network).name}.`
+        : 'Verified by the x402 facilitator; settlement not confirmed yet.',
     },
     added_at: receipt.addedAt,
     spotify: playlist

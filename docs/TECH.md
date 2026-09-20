@@ -135,7 +135,7 @@ describing both networks, each with `settlement`, `asset_address`, `asset_addres
 
 **402 response** carries a `payment-required` header (base64 x402 requirements: scheme `exact`, network
 `eip155:84532`, exact USDC amount, asset address, `payTo`, EIP-712 domain) plus a readable JSON body
-with the quote and the fake-pay hint.
+with the quote and the `payment.accepts` array.
 
 ---
 

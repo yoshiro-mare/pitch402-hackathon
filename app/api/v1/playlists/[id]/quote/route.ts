@@ -125,7 +125,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       description:
         network.settlement === 'live'
           ? 'POST to this URL to buy the spot. Without a payment it answers HTTP 402 with x402 payment requirements.'
-          : 'POST to this URL to buy the spot. This network has no confirmed facilitator, so settlement is unavailable — use demo (fake) pay, or switch to base-sepolia.',
+          : 'POST to this URL to buy the spot. This network has no confirmed facilitator, so settlement is unavailable — switch to base-sepolia to pay.',
     },
     note: 'Quote only. The price charged is snapshotted at payment and a paid spot is never repriced.',
   })

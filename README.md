@@ -70,9 +70,6 @@ take real payments.
 # The same EVM address works on both testnets.
 PITCH402_PAY_TO=0xYourEvmAddress
 
-# Allows the demo fake-pay header outside development. Leave unset in production.
-PITCH402_ALLOW_FAKE_PAY=1
-
 # Optional. Absolute base URL used in quotes and receipts.
 # PITCH402_BASE_URL=http://localhost:3000
 ```
@@ -153,9 +150,9 @@ before x402 settles anything.
 grants no policy, so that key is the only way in — and curator Spotify tokens are in there. It is
 server-only, and no route ships it to a browser.
 
-**Demo pay is off in production.** `fakePayAllowed()` returns false when `NODE_ENV=production`. Set
-`PITCH402_ALLOW_FAKE_PAY=1` to keep the one-click demo on a deployment, and know that it then hands
-free spots to anyone who finds the URL.
+**There is no way to take a spot without paying.** Every purchase goes through x402: the server
+answers 402 with signed payment requirements, the facilitator verifies the payment before the handler
+runs, and the spot is only written once that verification passes.
 
 ---
 
@@ -164,9 +161,10 @@ free spots to anyone who finds the URL.
 **1. Open the page.** <http://localhost:3000> shows the cycle, the next free spot and its price, and
 all 100 spots tinted by tier with the taken ones greyed out.
 
-**2. Buy a spot.** The form is prefilled with a real Spotify track URL and the next free spot. Pick a
-term — the total updates live — and press **Buy (demo / fake pay)**. A receipt appears immediately and
-the grid marks the spot sold. No wallet, no signup.
+**2. See the 402.** The form is prefilled with a real Spotify track URL and the next free spot. Pick a
+term — the total updates live — and press **Request payment requirements**. The page POSTs with no
+payment attached and shows the HTTP 402 the server returns, including the raw x402 body an agent
+would sign against. Buying itself needs a funded wallet; use the agent script in step 5.
 
 **3. Show the quote an agent would read.**
 
@@ -223,11 +221,12 @@ curl -s -X POST "http://localhost:3000/api/v1/playlists/demo/spots/3?network=hsk
   -d '{"track_uri":"spotify:track:4cOdK2wGLETKBW3PvgPWqT"}' | python3 -m json.tool
 ```
 
-Demo pay works on either network, and the receipt records which one was used:
+Asking for `hsk-testnet` returns 402 `settlement_unavailable_on_network` instead, because no
+facilitator is confirmed for `eip155:133`:
 
 ```bash
 curl -s -X POST "http://localhost:3000/api/v1/playlists/demo/spots/3?network=hsk-testnet" \
-  -H 'content-type: application/json' -H 'X-PITCH402-FAKE-PAY: 1' \
+  -H 'content-type: application/json' \
   -d '{"track_uri":"spotify:track:4cOdK2wGLETKBW3PvgPWqT"}' | python3 -m json.tool
 ```
 
@@ -301,10 +300,10 @@ Privy's enclave limits what that wallet can ever sign. See [docs/PRIVY.md](docs/
 
 This is a hackathon build. What is not yet true:
 
-- **The demo purchase is fake.** `X-PITCH402-FAKE-PAY: 1` completes a purchase with no wallet, no USDC
-  transfer and nothing settled onchain. Receipts from it say so, in the receipt body itself. It exists
-  so the product can be judged without funding a wallet, and it is disabled in production unless
-  explicitly switched on.
+- **HashKey Chain Testnet cannot be paid on at all.** It is advertised in quotes for network coverage,
+  but no x402 facilitator is confirmed for `eip155:133` and no testnet stablecoin address is verified,
+  so a POST selecting it returns 402 `settlement_unavailable_on_network`. Base Sepolia is the only
+  network a spot can actually be bought on.
 - **The paid path is wired but unproven end to end.** The 402 challenge, the payment requirements, the
   per-spot pricing and the refusal to charge for a taken spot are all working and tested. A successful
   payment returning 201 has not been run against a funded wallet.

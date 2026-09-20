@@ -34,14 +34,27 @@ type Quote = {
   next_action: { method: string; url: string }
 }
 
-type Receipt = {
-  receipt_id: string
-  spot: number
-  term: string
-  amount_paid: string
-  track_uri: string
-  added_at: string
-  payment: { method: string; settled: boolean; note: string; network: string; network_name: string }
+/**
+ * What a POST without payment answers with: HTTP 402 carrying the x402
+ * requirements an agent needs in order to pay. Nothing is bought here — the UI
+ * has no wallet, so it shows the challenge rather than pretending to settle.
+ */
+type Challenge = {
+  status: number
+  body: {
+    error?: string
+    message?: string
+    spot?: number
+    term?: string
+    price?: { amount: string; amount_atomic: string; currency: string }
+    payment?: {
+      selected_network: string
+      settlement: string
+      pay_to: string
+      accepts?: { network: string; chain: string; amount: string; settlement: string }[]
+    }
+    [k: string]: unknown
+  }
 }
 
 const API = '/api/v1/playlists/demo'
@@ -53,7 +66,7 @@ export default function Home() {
   const [spot, setSpot] = useState('')
   const [term, setTerm] = useState('cycle')
   const [network, setNetwork] = useState('base-sepolia')
-  const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const [challenge, setChallenge] = useState<Challenge | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -84,26 +97,32 @@ export default function Home() {
       ? `${Number(priceOf(selected)) * multiplier} USDC`
       : '—'
 
-  async function buy(e: React.FormEvent) {
+  /**
+   * POST the spot with no payment attached. The server answers 402 with real
+   * x402 payment requirements, which is exactly what a paying agent receives
+   * before it signs. A 409 means someone took the spot first.
+   */
+  async function requestPayment(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError(null)
-    setReceipt(null)
+    setChallenge(null)
     try {
       const res = await fetch(`${API}/spots/${selected}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'X-PITCH402-FAKE-PAY': '1' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ track_uri: track, term, network, buyer: 'demo-ui' }),
       })
       const data = await res.json()
-      if (!res.ok) {
+      if (res.status === 402) {
+        setChallenge({ status: res.status, body: data })
+      } else if (!res.ok) {
         const next = data.next_free_spot
-        setError(
-          `${data.error?.message ?? 'Buy failed'}${next ? ` — next free spot is ${next}` : ''}`,
-        )
+        setError(`${data.error?.message ?? data.message ?? 'Request failed'}${next ? ` — next free spot is ${next}` : ''}`)
         if (next) setSpot(String(next))
       } else {
-        setReceipt(data)
+        // Only reachable when a payment was attached, which this page cannot do.
+        setChallenge({ status: res.status, body: data })
       }
       await load()
     } catch (err) {
@@ -146,12 +165,12 @@ export default function Home() {
               title={`${n.name} · ${n.chain}`}
             >
               {n.name}
-              <small>{n.settlement === 'live' ? 'settles live' : 'demo pay only'}</small>
+              <small>{n.settlement === 'live' ? 'settles live' : 'no facilitator'}</small>
             </button>
           ))}
         </div>
 
-        <form onSubmit={buy} style={S.form}>
+        <form onSubmit={requestPayment} style={S.form}>
           <label style={S.label}>
             Spotify track URL
             <input value={track} onChange={(e) => setTrack(e.target.value)} style={S.input} required />
@@ -185,28 +204,39 @@ export default function Home() {
             </div>
           </div>
           <button type="submit" disabled={busy} style={S.button}>
-            {busy ? 'Buying…' : 'Buy (demo / fake pay)'}
+            {busy ? 'Requesting…' : 'Request payment requirements'}
           </button>
           <p style={S.fine}>
-            Demo shortcut: this sends the fake-pay header. No wallet, no USDC moves, nothing settles
-            onchain. The same endpoint answers 402 with real x402 requirements when that header is absent.
+            This POSTs the spot with no payment attached and shows the HTTP 402 the server returns —
+            the same x402 requirements a paying agent receives. Buying needs a funded wallet, so use
+            the agent script; this page never settles anything.
           </p>
         </form>
 
         {error && <p style={S.error}>{error}</p>}
 
-        {receipt && (
+        {challenge && (
           <div style={S.receipt}>
-            <strong>Receipt {receipt.receipt_id.slice(0, 14)}…</strong>
+            <strong>HTTP {challenge.status} — payment required</strong>
             <dl style={S.dl}>
-              <Row k="Spot" v={`#${receipt.spot}`} />
-              <Row k="Paid" v={`${receipt.amount_paid} USDC (${receipt.term})`} />
-              <Row k="Track" v={receipt.track_uri} />
-              <Row k="Added" v={new Date(receipt.added_at).toLocaleTimeString()} />
-              <Row k="Network" v={receipt.payment.network_name ?? receipt.payment.network} />
-              <Row k="Payment" v={`${receipt.payment.method} · settled: ${String(receipt.payment.settled)}`} />
+              <Row k="Spot" v={`#${challenge.body.spot ?? selected}`} />
+              <Row
+                k="Price"
+                v={
+                  challenge.body.price
+                    ? `${challenge.body.price.amount} ${challenge.body.price.currency} (${challenge.body.term ?? term})`
+                    : '—'
+                }
+              />
+              <Row k="Pay to" v={challenge.body.payment?.pay_to ?? '—'} />
+              <Row k="Network" v={challenge.body.payment?.selected_network ?? network} />
+              <Row k="Settlement" v={challenge.body.payment?.settlement ?? '—'} />
             </dl>
-            <p style={S.fine}>{receipt.payment.note}</p>
+            {challenge.body.message && <p style={S.fine}>{challenge.body.message}</p>}
+            <details>
+              <summary style={S.fine}>Raw 402 body</summary>
+              <pre style={S.pre}>{JSON.stringify(challenge.body, null, 2)}</pre>
+            </details>
           </div>
         )}
       </section>
@@ -319,7 +349,8 @@ const S: Record<string, React.CSSProperties> = {
   button: { alignSelf: 'flex-start', padding: '.55rem 1rem', border: 0, borderRadius: '.4rem', background: '#4f46e5', color: '#fff', font: 'inherit', fontWeight: 600, cursor: 'pointer' },
   fine: { margin: 0, fontSize: '.75rem', color: '#777', lineHeight: 1.45 },
   error: { marginTop: '.8rem', padding: '.55rem .7rem', borderRadius: '.4rem', background: '#fef2f2', color: '#b91c1c', fontSize: '.85rem' },
-  receipt: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: '.85rem' },
+  receipt: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontSize: '.85rem' },
+  pre: { margin: '.5rem 0 0', padding: '.6rem', borderRadius: '.4rem', background: '#0f172a', color: '#e2e8f0', fontSize: '.7rem', lineHeight: 1.5, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   dl: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '.15rem .7rem', margin: '.5rem 0' },
   dt: { color: '#555' },
   dd: { margin: 0, wordBreak: 'break-all' },

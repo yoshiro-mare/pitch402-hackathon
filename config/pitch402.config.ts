@@ -57,7 +57,7 @@ export type NetworkConfig = {
   /**
    * 'live'        — a facilitator settles payments on this chain today.
    * 'unavailable' — the network is advertised, but no facilitator will settle
-   *                 it yet, so only demo (fake) payments can complete.
+   *                 it yet, so a spot cannot be bought on it.
    */
   settlement: 'live' | 'unavailable'
   asset: {
@@ -127,7 +127,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       decimals: USDC_DECIMALS,
       verified: false,
       eip712: null,
-      note: 'Asset TBD. No verified testnet stablecoin address on chain 133 yet — use demo (fake) pay on this network.',
+      note: 'Asset TBD. No verified testnet stablecoin address on chain 133 yet, so spots cannot be bought on this network.',
     },
   },
 }
@@ -153,18 +153,6 @@ export function networkFor(id: NetworkId): NetworkConfig {
 /** Networks a client may choose, in advertised order (default first). */
 export function networkList(): NetworkConfig[] {
   return [NETWORKS[DEFAULT_NETWORK], ...Object.values(NETWORKS).filter((n) => n.id !== DEFAULT_NETWORK)]
-}
-
-/** Header that stands in for a real x402 payment while we demo without a wallet. */
-export const FAKE_PAY_HEADER = 'x-pitch402-fake-pay'
-
-/**
- * Fake payments are a demo shortcut: anyone sending the header gets a free
- * spot. Allowed outside production only, unless explicitly opted in.
- */
-export function fakePayAllowed(): boolean {
-  if (process.env.PITCH402_ALLOW_FAKE_PAY === '1') return true
-  return process.env.NODE_ENV !== 'production'
 }
 
 export function isValidTerm(value: string): value is Term {

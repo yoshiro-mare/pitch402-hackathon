@@ -15,7 +15,7 @@ import { db, dbEnabled, isUniqueViolation } from '@/lib/db'
  * Two backends behind one API. With Supabase configured, everything lives in
  * Postgres and survives restarts and multiple server instances. Without it,
  * everything lives in memory so the project runs with no setup — which is the
- * right default for a demo, and unsafe for anything else.
+ * right default for local development, and unsafe for anything else.
  *
  * Reads that only look at an already-loaded playlist stay synchronous; anything
  * that touches storage is async.
@@ -63,10 +63,10 @@ export type Receipt = SoldSpot & {
   cycle: number
   currency: 'USDC'
   decimals: number
-  /** how the payment was settled: a real x402 payment, or the demo shortcut */
-  paymentMethod: 'x402' | 'fake'
+  /** how the payment was settled */
+  paymentMethod: 'x402'
   paymentReference: string | null
-  /** true once the facilitator confirms settlement; fake payments never settle */
+  /** true once the facilitator confirms settlement */
   settled: boolean
 }
 
@@ -109,7 +109,7 @@ export type SellInput = {
   trackUri: string
   buyer: string | null
   network: NetworkId
-  paymentMethod: 'x402' | 'fake'
+  paymentMethod: 'x402'
   paymentReference: string | null
 }
 
@@ -356,7 +356,7 @@ function toReceipt(row: SpotRow): Receipt {
     cycle: row.cycle,
     currency: 'USDC',
     decimals: USDC_DECIMALS,
-    paymentMethod: row.payment_method as 'x402' | 'fake',
+    paymentMethod: row.payment_method as 'x402',
     paymentReference: row.payment_reference,
     settled: row.settled,
   }

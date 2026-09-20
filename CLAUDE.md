@@ -54,7 +54,8 @@ Estimates only if curator later uploads Spotify for Artists data, and must be la
    - facilitator: NONE confirmed. x402.org lists eip155:84532 + Solana only.
      Never claim x402.org settles HSK.
    - asset: TBD. No testnet stablecoin address verified onchain — left null in
-     config rather than guessed. Use fake pay on this network.
+     config rather than guessed. Spots cannot be bought on this network: a POST
+     selecting it returns 402 settlement_unavailable_on_network.
      Do NOT use HashKey mainnet USDC.e here.
 
 Client picks a network with ?network=base-sepolia|hsk-testnet or body "network".
@@ -63,7 +64,7 @@ Default stays base-sepolia. Receipts record the network chosen.
 - Spotify Web API: create/read/add items on curator-owned playlist only
 
 ## Build order
-1. API + quote + fake then real x402
+1. API + quote + real x402
 2. Inventory rules + configurable tiers
 3. Foundry contract
 4. Minimal curator/artist UI
