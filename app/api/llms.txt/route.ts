@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
       const settle =
         n.settlement === 'live'
           ? `settlement live via ${n.facilitator}`
-          : 'no confirmed facilitator — demo payments only'
+          : 'no confirmed facilitator — spots cannot be bought on this network'
       return `- ${n.name} (${n.id}, ${n.chain}): ${asset}; ${settle}`
     })
     .join('\n')
@@ -65,6 +65,11 @@ network. Settlement is verified on Base Sepolia only.
 Curator only, once per cycle:
 
 - GET ${base}/api/v1/curator/spotify/connect?playlist={id}
+
+## Integration guide
+
+${base}/agents — how an agent buys a spot, with runnable snippets, the wallet
+policy we use, and what Pitch402 does not claim.
 
 ## Start here
 

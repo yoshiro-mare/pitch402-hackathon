@@ -358,8 +358,8 @@ export default function Home() {
       </section>
 
       <footer style={S.footer}>
-        Agent API:{' '}
-        {['/api/v1/playlists/demo', '/api/v1/playlists/demo/quote?next=1', '/llms.txt', '/.well-known/agent.json'].map(
+        For agents:{' '}
+        {['/agents', '/api/v1/playlists/demo', '/api/v1/playlists/demo/quote?next=1', '/llms.txt', '/.well-known/agent.json'].map(
           (href) => (
             <a key={href} href={href} style={S.link}>
               {href}

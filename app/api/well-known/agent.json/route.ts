@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     version: '0.1.0',
     url: base,
     documentation: `${base}/llms.txt`,
+    integration_guide: `${base}/agents`,
     payment: {
       protocol: 'x402',
       default_network: DEFAULT_NETWORK,
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
       decimals: USDC_DECIMALS,
       // Choose with ?network=<id> on a quote, or a "network" field when buying.
       networks: networkSummaries(),
-      note: 'Settlement is live on base-sepolia only. Other networks are advertised for coverage and accept demo payments.',
+      note: 'Settlement is live on base-sepolia only. Other networks are advertised for coverage; a buy selecting one returns 402 settlement_unavailable_on_network.',
     },
     pricing: {
       currency: 'USDC',
