@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import type { Hex } from 'viem'
+import { connect, explain, injected, payingFetch, usdcBalance, WalletError } from './wallet'
 
 type Tier = { from: number; to: number; price: string }
 
@@ -32,6 +34,19 @@ type Quote = {
   term: string
   price: { amount: string; amount_atomic: string }
   next_action: { method: string; url: string }
+}
+
+type Receipt = {
+  receipt_id: string
+  receipt_url: string
+  spot: number
+  term: string
+  amount_paid: string
+  currency: string
+  track_uri: string
+  track: TrackInfo | null
+  payment: { method: string; settled: boolean; network_name: string; note: string }
+  spotify: { status: string; position?: number; playlist_url?: string; error?: string; reason?: string; retry_url?: string }
 }
 
 /**
@@ -85,6 +100,11 @@ export default function Home() {
   const [trackInfo, setTrackInfo] = useState<TrackInfo | null>(null)
   const [trackErr, setTrackErr] = useState<string | null>(null)
   const [trackBusy, setTrackBusy] = useState(false)
+  const [wallet, setWallet] = useState<Hex | null>(null)
+  const [balance, setBalance] = useState<number | null>(null)
+  const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const [paying, setPaying] = useState(false)
+  const hasWallet = typeof window !== 'undefined' && injected() !== null
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -155,6 +175,56 @@ export default function Home() {
     playlist && selected >= 1 && selected <= playlist.spots_per_cycle
       ? `${Number(priceOf(selected)) * multiplier} USDC`
       : '—'
+
+  async function connectWallet() {
+    setError(null)
+    try {
+      const address = await connect()
+      setWallet(address)
+      setBalance(await usdcBalance(address))
+    } catch (err) {
+      setError(err instanceof WalletError ? err.message : explain(err))
+    }
+  }
+
+  /**
+   * Buy the spot for real: POST, get 402, sign the EIP-3009 authorization in
+   * the wallet, retry with the payment attached. Same protocol an agent
+   * speaks — the only difference is that a person approves the signature.
+   */
+  async function buyWithWallet(e: React.FormEvent) {
+    e.preventDefault()
+    if (!wallet) return connectWallet()
+    setPaying(true)
+    setError(null)
+    setChallenge(null)
+    setReceipt(null)
+    try {
+      const price = String(Number(priceOf(selected)) * multiplier)
+      const res = await payingFetch(wallet, price)(
+        `${API}/spots/${selected}?term=${term}&network=base-sepolia`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ track_uri: track, buyer: wallet }),
+        },
+      )
+      const data = await res.json()
+      if (!res.ok) {
+        const next = data.next_free_spot
+        setError(`${data.error?.message ?? data.message ?? 'Buy failed'}${next ? ` — next free spot is ${next}` : ''}`)
+        if (next) setSpot(String(next))
+      } else {
+        setReceipt(data)
+        setBalance(await usdcBalance(wallet))
+      }
+      await load()
+    } catch (err) {
+      setError(explain(err))
+    } finally {
+      setPaying(false)
+    }
+  }
 
   /**
    * POST the spot with no payment attached. The server answers 402 with real
@@ -229,7 +299,7 @@ export default function Home() {
           ))}
         </div>
 
-        <form onSubmit={requestPayment} style={S.form}>
+        <form onSubmit={buyWithWallet} style={S.form}>
           <label style={S.label}>
             Spotify track URL
             <input value={track} onChange={(e) => setTrack(e.target.value)} style={S.input} required />
@@ -285,17 +355,66 @@ export default function Home() {
               <div style={{ ...S.input, ...S.total }}>{selectedTotal}</div>
             </div>
           </div>
-          <button type="submit" disabled={busy} style={S.button}>
-            {busy ? 'Requesting…' : 'Request payment requirements'}
-          </button>
-          <p style={S.fine}>
-            This POSTs the spot with no payment attached and shows the HTTP 402 the server returns —
-            the same x402 requirements a paying agent receives. Buying needs a funded wallet, so use
-            the agent script; this page never settles anything.
-          </p>
+          <div style={S.actions}>
+            <button type="submit" disabled={paying || busy} style={S.button}>
+              {paying ? 'Waiting for your wallet…' : wallet ? `Buy spot ${selected} — ${selectedTotal}` : 'Connect wallet & buy'}
+            </button>
+            <button type="button" onClick={requestPayment} disabled={busy || paying} style={S.buttonGhost}>
+              {busy ? 'Requesting…' : 'Inspect the 402'}
+            </button>
+          </div>
+
+          {wallet ? (
+            <p style={S.fine}>
+              Paying from <Code>{`${wallet.slice(0, 6)}…${wallet.slice(-4)}`}</Code>
+              {balance !== null && <> · {balance} USDC on Base Sepolia</>}
+              {balance !== null && balance < Number(priceOf(selected)) * multiplier && (
+                <span style={S.warn}> — not enough for this spot</span>
+              )}
+              . You sign an authorization, not a transaction: no ETH, no gas.
+            </p>
+          ) : (
+            <p style={S.fine}>
+              {hasWallet
+                ? 'Needs Base Sepolia USDC. You will be asked to switch network, then to sign — no gas, no account, no signup.'
+                : 'No browser wallet detected. Install MetaMask, or buy headlessly with examples/buy-spot.ts — no credentials from us either way.'}
+            </p>
+          )}
         </form>
 
         {error && <p style={S.error}>{error}</p>}
+
+        {receipt && (
+          <div style={S.paid}>
+            <strong>Paid — spot {receipt.spot} is yours</strong>
+            <dl style={S.dl}>
+              <Row k="Amount" v={`${receipt.amount_paid} ${receipt.currency} (${receipt.term})`} />
+              <Row k="Track" v={receipt.track ? `${receipt.track.name} — ${receipt.track.artist}` : receipt.track_uri} />
+              <Row k="Network" v={receipt.payment.network_name} />
+              <Row k="Settled" v={String(receipt.payment.settled)} />
+              <Row
+                k="Spotify"
+                v={
+                  receipt.spotify.status === 'placed'
+                    ? `on the playlist at position ${receipt.spotify.position}`
+                    : `${receipt.spotify.status}: ${receipt.spotify.error ?? receipt.spotify.reason ?? ''}`
+                }
+              />
+            </dl>
+            <p style={S.fine}>
+              <a href={receipt.receipt_url} target="_blank" rel="noreferrer">Receipt</a>
+              {receipt.spotify.playlist_url && (
+                <>
+                  {' · '}
+                  <a href={receipt.spotify.playlist_url} target="_blank" rel="noreferrer">Open the playlist</a>
+                </>
+              )}
+              {receipt.spotify.status === 'failed' && receipt.spotify.retry_url && (
+                <> · the spot is paid for and held; the placement can be retried</>
+              )}
+            </p>
+          </div>
+        )}
 
         {challenge && (
           <div style={S.receipt}>
@@ -380,6 +499,10 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
+function Code({ children }: { children: React.ReactNode }) {
+  return <code style={{ background: '#f1f5f9', borderRadius: '.2rem', padding: '.05rem .25rem' }}>{children}</code>
+}
+
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <>
@@ -430,6 +553,10 @@ const S: Record<string, React.CSSProperties> = {
   total: { display: 'flex', alignItems: 'center', fontWeight: 600, background: '#fafafe' },
   button: { alignSelf: 'flex-start', padding: '.55rem 1rem', border: 0, borderRadius: '.4rem', background: '#4f46e5', color: '#fff', font: 'inherit', fontWeight: 600, cursor: 'pointer' },
   fine: { margin: 0, fontSize: '.75rem', color: '#777', lineHeight: 1.45 },
+  actions: { display: 'flex', gap: '.5rem', flexWrap: 'wrap' },
+  buttonGhost: { padding: '.6rem .9rem', borderRadius: '.45rem', border: '1px solid #cbd5e1', background: '#fff', color: '#334155', fontSize: '.82rem', cursor: 'pointer' },
+  paid: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: '.85rem' },
+  warn: { color: '#b45309', fontWeight: 600 },
   trackCard: { display: 'flex', gap: '.7rem', alignItems: 'center', padding: '.55rem', borderRadius: '.5rem', border: '1px solid #e2e8f0', background: '#fff', textDecoration: 'none', color: 'inherit' },
   art: { borderRadius: '.3rem', objectFit: 'cover', flex: '0 0 auto' },
   artFallback: { width: 56, height: 56, display: 'grid', placeItems: 'center', background: '#f1f5f9', color: '#94a3b8', fontSize: '1.4rem' },
