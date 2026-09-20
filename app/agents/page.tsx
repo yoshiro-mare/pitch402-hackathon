@@ -55,6 +55,25 @@ export default function AgentsPage() {
       </section>
 
       <section style={S.section}>
+        <h2 style={S.h2}>What access requires</h2>
+        <table style={S.table}>
+          <tbody>
+            <tr><td style={S.td}>An account with us</td><td style={S.td}><span style={S.muted}>not required</span></td></tr>
+            <tr><td style={S.td}>An API key or token</td><td style={S.td}><span style={S.muted}>not required</span></td></tr>
+            <tr><td style={S.td}>An allowlist</td><td style={S.td}><span style={S.muted}>not required</span></td></tr>
+            <tr><td style={S.td}>A Spotify account</td><td style={S.td}><span style={S.muted}>not required</span></td></tr>
+            <tr><td style={S.td}>ETH for gas</td><td style={S.td}><span style={S.muted}>not required</span></td></tr>
+            <tr><td style={S.td}>A wallet that signs EIP-712</td><td style={S.td}><span style={S.ok}>required</span></td></tr>
+            <tr><td style={S.td}>USDC on Base Sepolia</td><td style={S.td}><span style={S.ok}>required</span></td></tr>
+          </tbody>
+        </table>
+        <p style={S.p}>
+          The endpoints are public and cross-origin, so an agent running in a page reaches them the
+          same way a server does. Spam is self-limiting: taking a spot costs money.
+        </p>
+      </section>
+
+      <section style={S.section}>
         <h2 style={S.h2}>Who pays whom</h2>
         <pre style={S.flow}>{`your wallet  ──signs EIP-3009 authorization──▶  x402 facilitator
                                                │ submits, pays the gas
@@ -129,6 +148,10 @@ const res = await client.fetch(
   },
 )
 const receipt = await res.json()`}</pre>
+        <p style={S.p}>
+          A complete runnable version is in the repo at <Code>examples/buy-spot.ts</Code> — a plain
+          private key, no SDK of ours, no credentials from us. That is the whole integration.
+        </p>
         <p style={S.p}>
           Two settings worth copying. <Code>maxAmountPerPayment</Code> because the client default is
           $1 and spot 1 costs {TIERS[0]?.price} USDC, so an uncapped-looking buy is refused before it
