@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { USDC_DECIMALS } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
-import { getPlaylist, nextFreeSpot, publicTerms, spotsRemaining } from '@/lib/store'
+import { getPlaylist, nextFreeSpot, publicTerms, spotsRemaining, storageBackend } from '@/lib/store'
 import { priceFor } from '@/lib/pricing'
 import { networkSummaries } from '@/lib/networks'
 
@@ -28,6 +28,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     spots_sold: playlist.sold.length,
     spots_remaining: spotsRemaining(playlist),
     next_free_spot: next,
+    // Which backend answered. On 'supabase' the one-buyer-per-spot rule is a
+    // unique constraint and holds across instances; on 'memory' it only holds
+    // inside this process.
+    storage: storageBackend(),
     pricing: {
       currency: 'USDC',
       decimals: USDC_DECIMALS,
