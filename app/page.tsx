@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import Landing from './Landing'
 import Demo from './Demo'
+import { LINE } from './theme'
 
 export default function Home() {
   const [spot, setSpot] = useState<number | undefined>(undefined)
@@ -21,11 +22,10 @@ export default function Home() {
       <Landing onPickSpot={setSpot} />
 
       {/*
-        The console keeps the light palette it was built in. The band below is
-        a deliberate seam: above it you are being sold to, below it you are
-        holding the API.
+        One palette throughout. The rule is the only seam: above it you are
+        being sold to, below it you are holding the API.
       */}
-      <section id="console" style={{ background: '#FFFFFF', borderTop: '1px solid #23211E' }}>
+      <section id="console" style={{ borderTop: `1px solid ${LINE}` }}>
         <Demo selectedSpot={spot} />
       </section>
     </>

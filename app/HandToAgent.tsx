@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { BG, INK, LINE, LINE_2, MONO, MUTED, MUTED_2, PANEL } from './theme'
 
 /**
  * The order, written out so it can be handed to something that is not this page.
@@ -141,12 +142,12 @@ export default function HandToAgent({ order }: { order: Order }) {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  wrap: { marginTop: '.9rem', border: '1px solid #e2e8f0', borderRadius: '.5rem', overflow: 'hidden', background: '#fff' },
-  head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.5rem', padding: '.4rem .5rem', borderBottom: '1px solid #f1f5f9' },
-  tabs: { display: 'flex', gap: '.15rem' },
-  tab: { padding: '.3rem .6rem', borderRadius: '.35rem', border: 'none', background: 'transparent', color: '#64748b', fontSize: '.76rem', cursor: 'pointer' },
-  tabOn: { background: '#0f172a', color: '#fff' },
-  copy: { padding: '.3rem .7rem', borderRadius: '.35rem', border: '1px solid #cbd5e1', background: '#fff', color: '#334155', fontSize: '.74rem', cursor: 'pointer' },
-  pre: { margin: 0, padding: '.85rem', background: '#0f172a', color: '#e2e8f0', fontSize: '.7rem', lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '22rem' },
-  note: { margin: 0, padding: '.5rem .6rem', fontSize: '.72rem', color: '#64748b', background: '#f8fafc' },
+  wrap: { marginTop: '1rem', border: `1px solid ${LINE_2}`, borderRadius: 3, overflow: 'hidden', background: BG },
+  head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.5rem', padding: '.5rem .6rem', borderBottom: `1px solid ${LINE}` },
+  tabs: { display: 'flex', gap: '.2rem' },
+  tab: { padding: '.35rem .7rem', borderRadius: 2, border: 'none', background: 'transparent', color: MUTED, font: `10px ${MONO}`, letterSpacing: '.12em', textTransform: 'uppercase', cursor: 'pointer' },
+  tabOn: { background: INK, color: BG },
+  copy: { padding: '.35rem .8rem', borderRadius: 2, border: `1px solid ${LINE_2}`, background: 'transparent', color: INK, font: `10px ${MONO}`, letterSpacing: '.12em', textTransform: 'uppercase', cursor: 'pointer' },
+  pre: { margin: 0, padding: '1rem', background: BG, color: MUTED_2, font: `11px ${MONO}`, lineHeight: 1.7, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '22rem' },
+  note: { margin: 0, padding: '.6rem .7rem', font: `10px ${MONO}`, lineHeight: 1.7, letterSpacing: '.06em', color: MUTED, background: PANEL, borderTop: `1px solid ${LINE}` },
 }

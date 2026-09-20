@@ -14,17 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 
-const ACCENT = 'oklch(0.68 0.17 265)'
-const INK = '#F1EFE9'
-const BG = '#0B0B0A'
-const PANEL = '#131210'
-const MUTED = '#9A968E'
-const MUTED_2 = '#B3AFA6'
-const DIM = '#6B6862'
-const LINE = '#23211E'
-const LINE_2 = '#33302B'
-
-const MONO = "var(--font-mono), ui-monospace, monospace"
+import { ACCENT, BG, DIM, GUTTER, INK, LINE, LINE_2, MAX_W, MONO, MUTED, MUTED_2, PANEL, tierStyle } from './theme'
 
 const API = '/api/v1/playlists/demo'
 const SOURCE = 'https://github.com/yoshiro-mare/pitch402-hackathon'
@@ -55,24 +45,6 @@ const UNKNOWN: Inventory = {
   ],
   playlistUrl: null,
   known: false,
-}
-
-/**
- * Tier colour is keyed off the price, not off the spot number. The tiers are
- * editable per cycle, so a grid that hardcoded "1, 2-3, 4-10" would start
- * lying the first time a curator retiers.
- */
-function tierStyle(price: string): { bg: string; fg: string } {
-  switch (price) {
-    case '10':
-      return { bg: INK, fg: BG }
-    case '5':
-      return { bg: ACCENT, fg: '#FFFFFF' }
-    case '3':
-      return { bg: `color-mix(in oklch, ${ACCENT} 36%, ${BG})`, fg: INK }
-    default:
-      return { bg: LINE, fg: INK }
-  }
 }
 
 export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) => void }) {
@@ -145,7 +117,7 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
   )
 
   return (
-    <div style={{ maxWidth: 1320, margin: '0 auto', padding: '0 clamp(18px,3vw,40px)' }}>
+    <div style={{ maxWidth: MAX_W, margin: '0 auto', padding: GUTTER }}>
       <style>{CSS}</style>
 
       <header

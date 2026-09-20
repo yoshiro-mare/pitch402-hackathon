@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Hex } from 'viem'
 import { connect, EXPLORER, explain, injected, payingFetch, settlementTx, usdcBalance, WalletError } from './wallet'
 import HandToAgent from './HandToAgent'
+import { ACCENT, BAD, BG, DIM, INK, LINE, LINE_2, LINE_3, MAX_W, MONO, MUTED, MUTED_2, OK, PANEL, WARN } from './theme'
 
 type Tier = { from: number; to: number; price: string }
 
@@ -295,7 +296,7 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
   }
 
   return (
-    <main style={S.page}>
+    <main className="dm" style={S.page}>
       <style>{CSS}</style>
 
       {/*
@@ -563,7 +564,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function Code({ children }: { children: React.ReactNode }) {
-  return <code style={{ background: '#f1f5f9', borderRadius: '.2rem', padding: '.05rem .25rem' }}>{children}</code>
+  return <code style={{ background: LINE, borderRadius: 2, padding: '.05rem .3rem', fontFamily: MONO, fontSize: '.85em' }}>{children}</code>
 }
 
 function Row({ k, v }: { k: string; v: string }) {
@@ -578,67 +579,76 @@ function Row({ k, v }: { k: string; v: string }) {
 const CSS = `
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.4rem, 1fr)); gap: .35rem; }
 .spot { display:flex; flex-direction:column; align-items:center; gap:.1rem; padding:.4rem .2rem;
-  border:1px solid #d7d7e0; border-radius:.4rem; background:#fff; cursor:pointer; font:inherit; color:#111; }
-.spot b { font-size:.8rem; font-weight:600; }
-.spot small { font-size:.65rem; color:#666; }
-.spot:hover:not(:disabled) { border-color:#4f46e5; }
-.spot.sel { outline:2px solid #4f46e5; outline-offset:1px; }
-.spot.taken { background:#f1f1f4; color:#9a9aa8; cursor:not-allowed; text-decoration:line-through; }
-.spot.t10 { background:#eef2ff; } .spot.t5 { background:#f5f3ff; } .spot.t3 { background:#f8fafc; }
-.spot.taken.t10, .spot.taken.t5, .spot.taken.t3 { background:#f1f1f4; }
-.sw { display:inline-block; width:.7rem; height:.7rem; border-radius:.2rem; border:1px solid #d7d7e0; vertical-align:middle; }
-.sw.t10 { background:#eef2ff; } .sw.t5 { background:#f5f3ff; } .sw.t3 { background:#f8fafc; }
-.sw.t1 { background:#fff; } .sw.taken { background:#f1f1f4; }
-.net { display:flex; flex-direction:column; align-items:flex-start; gap:.05rem; padding:.35rem .6rem;
-  border:1px solid #d7d7e0; border-radius:.4rem; background:#fff; font:inherit; font-size:.82rem;
-  color:#111; cursor:pointer; }
-.net small { font-size:.65rem; color:#777; }
-.net.on { border-color:#4f46e5; background:#eef2ff; }
-.net.on small { color:#4f46e5; }
+  border:1px solid transparent; border-radius:2px; background:${LINE}; cursor:pointer;
+  font-family:${MONO}; color:${INK}; transition:transform .12s ease; }
+.spot b { font-size:.8rem; font-weight:500; }
+.spot small { font-size:.62rem; opacity:.7; }
+.spot:hover:not(:disabled) { transform:translateY(-2px); }
+.spot.sel { outline:2px solid ${INK}; outline-offset:2px; }
+.spot.t10 { background:${INK}; color:${BG}; }
+.spot.t5 { background:${ACCENT}; color:#FFFFFF; }
+.spot.t3 { background:color-mix(in oklch, ${ACCENT} 36%, ${BG}); color:${INK}; }
+.spot.taken, .spot.taken.t10, .spot.taken.t5, .spot.taken.t3 {
+  background:transparent; color:${DIM}; border:1px dashed #4A473F;
+  cursor:not-allowed; text-decoration:line-through; }
+.sw { display:inline-block; width:.7rem; height:.7rem; border-radius:2px; vertical-align:middle; }
+.sw.t10 { background:${INK}; } .sw.t5 { background:${ACCENT}; }
+.sw.t3 { background:color-mix(in oklch, ${ACCENT} 36%, ${BG}); }
+.sw.t1 { background:${LINE}; } .sw.taken { background:transparent; border:1px dashed #4A473F; }
+.net { display:flex; flex-direction:column; align-items:flex-start; gap:.05rem; padding:.4rem .7rem;
+  border:1px solid ${LINE_2}; border-radius:2px; background:transparent; font:inherit; font-size:.82rem;
+  color:${INK}; cursor:pointer; transition:border-color .15s ease; }
+.net small { font-family:${MONO}; font-size:.62rem; letter-spacing:.08em; text-transform:uppercase; color:${MUTED}; }
+.net:hover { border-color:${INK}; }
+.net.on { border-color:${ACCENT}; background:color-mix(in oklch, ${ACCENT} 14%, transparent); }
+.net.on small { color:${ACCENT}; }
+.dm input, .dm select { color-scheme: dark; }
+.dm input:focus, .dm select:focus { outline:none; border-color:${ACCENT}; }
+.dm ::placeholder { color:${DIM}; }
 `
 
 const S: Record<string, React.CSSProperties> = {
-  page: { maxWidth: '54rem', margin: '0 auto', padding: '2rem', color: '#111' },
-  h1: { margin: '0 0 .2rem', fontSize: '1.6rem' },
-  sub: { margin: '0 0 1.2rem', color: '#555', maxWidth: '42rem' },
-  stats: { display: 'flex', flexWrap: 'wrap', gap: '.6rem', marginBottom: '1.2rem' },
-  stat: { flex: '1 1 8rem', border: '1px solid #e5e5ec', borderRadius: '.5rem', padding: '.6rem .7rem', background: '#fff' },
-  statLabel: { display: 'block', fontSize: '.7rem', textTransform: 'uppercase', letterSpacing: '.04em', color: '#777' },
-  statValue: { display: 'block', fontSize: '1.15rem', fontWeight: 600 },
-  card: { border: '1px solid #e5e5ec', borderRadius: '.6rem', padding: '1rem', background: '#fff', marginBottom: '1.2rem' },
-  h2: { margin: '0 0 .7rem', fontSize: '1rem' },
-  form: { display: 'flex', flexDirection: 'column', gap: '.6rem' },
-  netRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.4rem', marginBottom: '.8rem' },
-  netLabel: { fontSize: '.8rem', color: '#555', marginRight: '.2rem' },
-  row: { display: 'flex', flexWrap: 'wrap', gap: '.6rem' },
-  label: { display: 'flex', flexDirection: 'column', gap: '.25rem', fontSize: '.8rem', color: '#555' },
-  input: { padding: '.45rem .55rem', border: '1px solid #d7d7e0', borderRadius: '.35rem', font: 'inherit', fontSize: '.85rem', color: '#111', background: '#fff' },
-  total: { display: 'flex', alignItems: 'center', fontWeight: 600, background: '#fafafe' },
-  button: { alignSelf: 'flex-start', padding: '.55rem 1rem', border: 0, borderRadius: '.4rem', background: '#4f46e5', color: '#fff', font: 'inherit', fontWeight: 600, cursor: 'pointer' },
-  fine: { margin: 0, fontSize: '.75rem', color: '#777', lineHeight: 1.45 },
+  page: { maxWidth: MAX_W, margin: '0 auto', padding: `clamp(56px,8vw,110px) 0`, color: INK },
+  h1: { margin: '0 0 .4rem', fontSize: 'clamp(28px,4vw,54px)', lineHeight: 1, letterSpacing: '-0.045em', fontWeight: 800, textTransform: 'uppercase' },
+  sub: { margin: '0 0 1.6rem', fontSize: 15, lineHeight: 1.6, color: MUTED, maxWidth: '38em' },
+  stats: { display: 'flex', flexWrap: 'wrap', gap: '.5rem', marginBottom: '1.4rem' },
+  stat: { flex: '1 1 9rem', border: `1px solid ${LINE}`, borderRadius: 3, padding: '14px 18px', background: PANEL },
+  statLabel: { display: 'block', font: `10px ${MONO}`, letterSpacing: '.14em', textTransform: 'uppercase', color: MUTED },
+  statValue: { display: 'block', font: `20px ${MONO}`, letterSpacing: '-0.03em', marginTop: 8, color: INK },
+  card: { border: `1px solid ${LINE}`, borderRadius: 4, padding: 'clamp(18px,3vw,28px)', background: PANEL, marginBottom: '1.2rem' },
+  h2: { margin: '0 0 1rem', fontSize: 'clamp(18px,2vw,24px)', letterSpacing: '-0.035em', fontWeight: 700 },
+  form: { display: 'flex', flexDirection: 'column', gap: '.8rem', maxWidth: '46rem' },
+  netRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.4rem', marginBottom: '1.1rem' },
+  netLabel: { font: `10px ${MONO}`, letterSpacing: '.14em', textTransform: 'uppercase', color: MUTED, marginRight: '.4rem' },
+  row: { display: 'flex', flexWrap: 'wrap', gap: '.7rem' },
+  label: { display: 'flex', flexDirection: 'column', gap: '.35rem', font: `10px ${MONO}`, letterSpacing: '.14em', textTransform: 'uppercase', color: MUTED },
+  input: { padding: '.6rem .7rem', border: `1px solid ${LINE_2}`, borderRadius: 2, fontFamily: 'inherit', fontSize: '.9rem', letterSpacing: 'normal', textTransform: 'none', color: INK, background: BG },
+  total: { display: 'flex', alignItems: 'center', fontFamily: MONO, fontSize: '1rem', background: 'transparent', borderColor: LINE },
+  button: { alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 10, padding: '14px 24px', border: 0, borderRadius: 2, background: ACCENT, color: '#FFFFFF', font: 'inherit', fontSize: 15, fontWeight: 700, letterSpacing: '-0.015em', cursor: 'pointer' },
+  fine: { margin: 0, font: `11px ${MONO}`, lineHeight: 1.7, color: MUTED },
   actions: { display: 'flex', gap: '.5rem', flexWrap: 'wrap' },
-  buttonGhost: { padding: '.6rem .9rem', borderRadius: '.45rem', border: '1px solid #cbd5e1', background: '#fff', color: '#334155', fontSize: '.82rem', cursor: 'pointer' },
-  buttonGhostQuiet: { padding: '.6rem .7rem', borderRadius: '.45rem', border: '1px solid transparent', background: 'transparent', color: '#94a3b8', fontSize: '.78rem', cursor: 'pointer' },
-  paid: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: '.85rem' },
-  warn: { color: '#b45309', fontWeight: 600 },
-  txLink: { color: '#047857', fontWeight: 600 },
-  txHash: { fontSize: '.66rem', color: '#94a3b8', wordBreak: 'break-all' },
-  trackCard: { display: 'flex', gap: '.7rem', alignItems: 'center', padding: '.55rem', borderRadius: '.5rem', border: '1px solid #e2e8f0', background: '#fff', textDecoration: 'none', color: 'inherit' },
-  art: { borderRadius: '.3rem', objectFit: 'cover', flex: '0 0 auto' },
-  artFallback: { width: 56, height: 56, display: 'grid', placeItems: 'center', background: '#f1f5f9', color: '#94a3b8', fontSize: '1.4rem' },
-  trackMeta: { display: 'flex', flexDirection: 'column', gap: '.12rem', minWidth: 0 },
-  trackName: { fontSize: '.9rem', display: 'flex', alignItems: 'center', gap: '.35rem' },
-  trackSub: { fontSize: '.75rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  explicit: { fontSize: '.6rem', background: '#94a3b8', color: '#fff', borderRadius: '.15rem', padding: '0 .2rem', lineHeight: 1.5 },
-  error: { marginTop: '.8rem', padding: '.55rem .7rem', borderRadius: '.4rem', background: '#fef2f2', color: '#b91c1c', fontSize: '.85rem' },
-  receipt: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontSize: '.85rem' },
-  pre: { margin: '.5rem 0 0', padding: '.6rem', borderRadius: '.4rem', background: '#0f172a', color: '#e2e8f0', fontSize: '.7rem', lineHeight: 1.5, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  dl: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '.15rem .7rem', margin: '.5rem 0' },
-  dt: { color: '#555' },
-  dd: { margin: 0, wordBreak: 'break-all' },
+  buttonGhost: { padding: '10px 18px', borderRadius: 2, border: `1px solid ${LINE_2}`, background: 'transparent', color: INK, font: `11px ${MONO}`, letterSpacing: '.1em', textTransform: 'uppercase', cursor: 'pointer' },
+  buttonGhostQuiet: { padding: '10px 14px', borderRadius: 2, border: '1px solid transparent', background: 'transparent', color: DIM, font: `11px ${MONO}`, letterSpacing: '.1em', textTransform: 'uppercase', cursor: 'pointer' },
+  paid: { marginTop: '1rem', padding: '16px 20px', borderRadius: 3, background: `color-mix(in oklch, ${OK} 10%, ${BG})`, border: `1px solid color-mix(in oklch, ${OK} 30%, ${BG})`, fontSize: '.88rem' },
+  warn: { color: WARN, fontWeight: 600 },
+  txLink: { color: OK, fontWeight: 600 },
+  txHash: { font: `10px ${MONO}`, color: DIM, wordBreak: 'break-all' },
+  trackCard: { display: 'flex', gap: '.8rem', alignItems: 'center', padding: '.6rem', borderRadius: 3, border: `1px solid ${LINE}`, background: BG, textDecoration: 'none', color: 'inherit' },
+  art: { borderRadius: 2, objectFit: 'cover', flex: '0 0 auto' },
+  artFallback: { width: 56, height: 56, display: 'grid', placeItems: 'center', background: LINE, color: DIM, fontSize: '1.4rem' },
+  trackMeta: { display: 'flex', flexDirection: 'column', gap: '.14rem', minWidth: 0 },
+  trackName: { fontSize: '.92rem', fontWeight: 600, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '.35rem' },
+  trackSub: { font: `11px ${MONO}`, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  explicit: { font: `9px ${MONO}`, background: LINE_3, color: MUTED, borderRadius: 2, padding: '1px .25rem', lineHeight: 1.5 },
+  error: { marginTop: '.9rem', padding: '12px 16px', borderRadius: 3, background: `color-mix(in oklch, ${BAD} 12%, ${BG})`, border: `1px solid color-mix(in oklch, ${BAD} 32%, ${BG})`, color: INK, fontSize: '.88rem' },
+  receipt: { marginTop: '1rem', padding: '16px 20px', borderRadius: 3, background: BG, border: `1px solid ${LINE_2}`, fontSize: '.88rem' },
+  pre: { margin: '.6rem 0 0', padding: '14px', borderRadius: 3, background: BG, border: `1px solid ${LINE}`, color: MUTED_2, font: `11px ${MONO}`, lineHeight: 1.7, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  dl: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '.25rem .9rem', margin: '.6rem 0' },
+  dt: { font: `10px ${MONO}`, letterSpacing: '.1em', textTransform: 'uppercase', color: MUTED },
+  dd: { margin: 0, wordBreak: 'break-all', fontSize: '.85rem' },
   legendRow: { display: 'flex', flexWrap: 'wrap', gap: '.6rem', alignItems: 'baseline', justifyContent: 'space-between' },
-  legend: { display: 'flex', flexWrap: 'wrap', gap: '.7rem', fontSize: '.72rem', color: '#666', marginBottom: '.7rem' },
-  legendItem: { display: 'inline-flex', alignItems: 'center', gap: '.3rem' },
-  footer: { display: 'flex', flexWrap: 'wrap', gap: '.7rem', fontSize: '.78rem', color: '#777' },
-  link: { color: '#4f46e5' },
+  legend: { display: 'flex', flexWrap: 'wrap', gap: '1rem', font: `10px ${MONO}`, letterSpacing: '.12em', textTransform: 'uppercase', color: MUTED, marginBottom: '.9rem' },
+  legendItem: { display: 'inline-flex', alignItems: 'center', gap: '.4rem' },
+  footer: { display: 'flex', flexWrap: 'wrap', gap: '1.2rem', font: `11px ${MONO}`, letterSpacing: '.1em', textTransform: 'uppercase', color: DIM },
+  link: { color: INK },
 }
