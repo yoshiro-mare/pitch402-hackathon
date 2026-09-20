@@ -180,6 +180,25 @@ value         lte  10000000                  10 USDC per payment`}</pre>
       </section>
 
       <section style={S.section}>
+        <h2 style={S.h2}>Using a coding agent</h2>
+        <p style={S.p}>
+          An agent with a shell and a wallet key needs no integration work from you at all. Install
+          the skill and ask:
+        </p>
+        <pre style={S.code}>{`mkdir -p .claude/skills/pitch402
+curl -o .claude/skills/pitch402/SKILL.md ${BASE}/skill.md
+
+export BUYER_PRIVATE_KEY=0x…        # funded with Base Sepolia USDC`}</pre>
+        <p style={S.p}>Then, in the agent:</p>
+        <pre style={S.code}>{`Buy spot 7 on Pitch402 for spotify:track:4cOdK2wGLETKBW3PvgPWqT`}</pre>
+        <p style={S.p}>
+          The skill tells it to quote before paying, never to assume a price, what to do when a spot
+          is taken underneath it, and what it must not claim on our behalf. Without the skill it can
+          still work it out from <Code>/llms.txt</Code> — the skill just removes the guessing.
+        </p>
+      </section>
+
+      <section style={S.section}>
         <h2 style={S.h2}>Prices</h2>
         <table style={S.table}>
           <thead>
@@ -279,6 +298,7 @@ value         lte  10000000                  10 USDC per payment`}</pre>
         {[
           ['/.well-known/agent.json', 'capabilities, pricing, networks'],
           ['/llms.txt', 'the same in prose'],
+          ['/skill.md', 'drop-in agent skill'],
           ['/api/v1/playlists', 'live inventory'],
         ].map(([href, what]) => (
           <a key={href} href={href} style={S.footerLink}>

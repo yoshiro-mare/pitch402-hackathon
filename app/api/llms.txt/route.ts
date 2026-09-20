@@ -66,6 +66,13 @@ Curator only, once per cycle:
 
 - GET ${base}/api/v1/curator/spotify/connect?playlist={id}
 
+## Agent skill
+
+${base}/skill.md — a drop-in skill file. An agent that can install skills can
+fetch this and it will know how to buy without further instruction:
+
+  curl -o .claude/skills/pitch402/SKILL.md ${base}/skill.md
+
 ## Integration guide
 
 ${base}/agents — how an agent buys a spot, with runnable snippets, the wallet

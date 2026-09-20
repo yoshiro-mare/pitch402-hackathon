@@ -6,6 +6,7 @@ const nextConfig = {
     return [
       { source: '/.well-known/agent.json', destination: '/api/well-known/agent.json' },
       { source: '/llms.txt', destination: '/api/llms.txt' },
+      { source: '/skill.md', destination: '/api/skill.md' },
     ]
   },
 }

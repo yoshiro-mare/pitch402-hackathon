@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
     url: base,
     documentation: `${base}/llms.txt`,
     integration_guide: `${base}/agents`,
+    skill: `${base}/skill.md`,
     payment: {
       protocol: 'x402',
       default_network: DEFAULT_NETWORK,
