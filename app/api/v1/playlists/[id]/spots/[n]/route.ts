@@ -19,9 +19,10 @@ import {
   type Playlist,
   type Receipt,
 } from '@/lib/store'
-import { normalizeTrackUri } from '@/lib/track'
+import { normalizeTrackUri, trackIdFrom } from '@/lib/track'
 import { placeTrack, serializePlacement, unplaceTrack } from '@/lib/placement'
 import { acceptsList, resolveNetwork } from '@/lib/networks'
+import { SpotifyError, getTrack, serializeTrack, spotifyConfigured, type SpotifyTrack } from '@/lib/spotify'
 import {
   assetPrice,
   canSettle,
@@ -117,11 +118,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const buyer = typeof body.buyer === 'string' && body.buyer.trim() ? body.buyer.trim() : null
 
+  // Resolve the track before anyone is charged. Shape validation above only
+  // proves the id is well formed; this proves Spotify actually has it. Taking
+  // money for a track that can never be placed is the one failure the buyer
+  // cannot fix afterwards.
+  let track: SpotifyTrack | null = null
+  if (spotifyConfigured()) {
+    try {
+      track = await getTrack(trackIdFrom(trackUri))
+      if (track === null) {
+        return error(400, 'track_not_found', 'Spotify has no track with that id.', {
+          track_uri: trackUri,
+          hint: 'Copy the track link from Spotify: Share > Copy Song Link.',
+        })
+      }
+    } catch (err) {
+      // Spotify being unreachable is our problem, not the buyer's. Let the sale
+      // proceed unverified rather than refusing a valid track over an outage.
+      track = null
+      if (!(err instanceof SpotifyError)) throw err
+    }
+  }
+
   // Price snapshot. Stored as paid and never recomputed, so a later tier change
   // cannot reprice a spot that someone already bought.
   const price = priceFor(spot, term)
 
-  const purchase = { spot, trackUri, buyer, term, price, network }
+  const purchase = { spot, trackUri, buyer, term, price, network, track }
 
   // Advertised network with no facilitator: say so plainly instead of issuing
   // payment requirements nobody can settle.
@@ -145,6 +168,8 @@ type Purchase = {
   term: Term
   price: Price
   network: NetworkConfig
+  /** resolved catalog details, or null when Spotify could not be reached */
+  track: SpotifyTrack | null
 }
 
 /**
@@ -269,7 +294,7 @@ async function settle(base: string, playlist: Playlist, purchase: Purchase): Pro
   // paid for and retryable.
   await placeTrack(playlist, receipt)
 
-  return json(serializeReceipt(base, receipt, playlist), {
+  return json(serializeReceipt(base, receipt, playlist, purchase.track), {
     status: 201,
     headers: { location: `${base}/api/v1/receipts/${receipt.id}` },
   })
@@ -327,6 +352,7 @@ function quoteBody(base: string, playlist: Playlist, purchase: Purchase, address
       // ?network=<id> or a "network" field in the body.
       accepts: acceptsList(purchase.price, address),
     },
+    track: purchase.track ? serializeTrack(purchase.track) : null,
     quote_url: `${base}/api/v1/playlists/${playlist.id}/quote?spot=${purchase.spot}&term=${purchase.term}&network=${purchase.network.id}`,
     note: 'Price is snapshotted at payment. A paid spot is never repriced.',
   }
@@ -364,7 +390,7 @@ function settlementUnavailableResponse(base: string, playlist: Playlist, purchas
   )
 }
 
-function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist) {
+function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist, track: SpotifyTrack | null) {
   return {
     receipt_id: receipt.id,
     receipt_url: `${base}/api/v1/receipts/${receipt.id}`,
@@ -374,6 +400,7 @@ function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist) {
     spot: receipt.spot,
     term: receipt.term,
     track_uri: receipt.trackUri,
+    track: track ? serializeTrack(track) : null,
     buyer: receipt.buyer,
     amount_paid: receipt.amount,
     amount_paid_atomic: receipt.amountAtomic,

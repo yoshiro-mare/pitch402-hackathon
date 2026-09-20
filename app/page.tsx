@@ -57,7 +57,22 @@ type Challenge = {
   }
 }
 
+type TrackInfo = {
+  name: string
+  artist: string
+  album: string
+  album_image: string | null
+  duration_ms: number
+  explicit: boolean
+  url: string
+}
+
 const API = '/api/v1/playlists/demo'
+
+function mmss(ms: number): string {
+  const total = Math.round(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
 
 export default function Home() {
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
@@ -67,6 +82,9 @@ export default function Home() {
   const [term, setTerm] = useState('cycle')
   const [network, setNetwork] = useState('base-sepolia')
   const [challenge, setChallenge] = useState<Challenge | null>(null)
+  const [trackInfo, setTrackInfo] = useState<TrackInfo | null>(null)
+  const [trackErr, setTrackErr] = useState<string | null>(null)
+  const [trackBusy, setTrackBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -83,6 +101,47 @@ export default function Home() {
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * Resolve whatever is in the track box against the Spotify catalog so the
+   * buyer sees the song before paying for the spot. Debounced, and cancelled on
+   * every keystroke so a slow lookup cannot overwrite a newer one.
+   */
+  useEffect(() => {
+    const value = track.trim()
+    if (!value) {
+      setTrackInfo(null)
+      setTrackErr(null)
+      return
+    }
+    let cancelled = false
+    setTrackBusy(true)
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/quote?next=1&track_uri=${encodeURIComponent(value)}`)
+        const data = await res.json()
+        if (cancelled) return
+        if (!res.ok) {
+          setTrackInfo(null)
+          setTrackErr(data.error?.message ?? 'Could not resolve that track')
+        } else {
+          setTrackInfo(data.track ?? null)
+          setTrackErr(data.track_error ?? null)
+        }
+      } catch {
+        if (!cancelled) {
+          setTrackInfo(null)
+          setTrackErr('Lookup failed')
+        }
+      } finally {
+        if (!cancelled) setTrackBusy(false)
+      }
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [track])
 
   const priceOf = (n: number): string => {
     const tier = playlist?.pricing.tiers.find((t) => n >= t.from && n <= t.to)
@@ -175,6 +234,29 @@ export default function Home() {
             Spotify track URL
             <input value={track} onChange={(e) => setTrack(e.target.value)} style={S.input} required />
           </label>
+
+          {trackInfo && (
+            <a href={trackInfo.url} target="_blank" rel="noreferrer" style={S.trackCard}>
+              {trackInfo.album_image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={trackInfo.album_image} alt="" width={56} height={56} style={S.art} />
+              ) : (
+                <div style={{ ...S.art, ...S.artFallback }}>♪</div>
+              )}
+              <div style={S.trackMeta}>
+                <strong style={S.trackName}>
+                  {trackInfo.name}
+                  {trackInfo.explicit && <span style={S.explicit}>E</span>}
+                </strong>
+                <span style={S.trackSub}>{trackInfo.artist}</span>
+                <span style={S.trackSub}>
+                  {trackInfo.album} · {mmss(trackInfo.duration_ms)}
+                </span>
+              </div>
+            </a>
+          )}
+          {!trackInfo && trackBusy && <p style={S.fine}>Looking up track…</p>}
+          {trackErr && <p style={S.error}>{trackErr}</p>}
           <div style={S.row}>
             <label style={{ ...S.label, flex: '1 1 8rem' }}>
               Spot
@@ -348,6 +430,13 @@ const S: Record<string, React.CSSProperties> = {
   total: { display: 'flex', alignItems: 'center', fontWeight: 600, background: '#fafafe' },
   button: { alignSelf: 'flex-start', padding: '.55rem 1rem', border: 0, borderRadius: '.4rem', background: '#4f46e5', color: '#fff', font: 'inherit', fontWeight: 600, cursor: 'pointer' },
   fine: { margin: 0, fontSize: '.75rem', color: '#777', lineHeight: 1.45 },
+  trackCard: { display: 'flex', gap: '.7rem', alignItems: 'center', padding: '.55rem', borderRadius: '.5rem', border: '1px solid #e2e8f0', background: '#fff', textDecoration: 'none', color: 'inherit' },
+  art: { borderRadius: '.3rem', objectFit: 'cover', flex: '0 0 auto' },
+  artFallback: { width: 56, height: 56, display: 'grid', placeItems: 'center', background: '#f1f5f9', color: '#94a3b8', fontSize: '1.4rem' },
+  trackMeta: { display: 'flex', flexDirection: 'column', gap: '.12rem', minWidth: 0 },
+  trackName: { fontSize: '.9rem', display: 'flex', alignItems: 'center', gap: '.35rem' },
+  trackSub: { fontSize: '.75rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  explicit: { fontSize: '.6rem', background: '#94a3b8', color: '#fff', borderRadius: '.15rem', padding: '0 .2rem', lineHeight: 1.5 },
   error: { marginTop: '.8rem', padding: '.55rem .7rem', borderRadius: '.4rem', background: '#fef2f2', color: '#b91c1c', fontSize: '.85rem' },
   receipt: { marginTop: '.9rem', padding: '.8rem', borderRadius: '.5rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontSize: '.85rem' },
   pre: { margin: '.5rem 0 0', padding: '.6rem', borderRadius: '.4rem', background: '#0f172a', color: '#e2e8f0', fontSize: '.7rem', lineHeight: 1.5, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },

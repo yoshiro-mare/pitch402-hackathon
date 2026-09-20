@@ -489,3 +489,121 @@ export async function removeTrack(
     }),
   )
 }
+
+// --- catalog ---------------------------------------------------------------
+
+/**
+ * Track lookup runs on an app token, not the curator's.
+ *
+ * A buyer pastes a track URL before any curator is necessarily connected, and
+ * resolving it is a read of the public catalog that needs no user context. Using
+ * client credentials keeps it working on an unconnected cycle and keeps a
+ * buyer's typo out of the curator's rate limit.
+ */
+type AppToken = { value: string; expiresAt: number }
+
+const globalForCatalog = globalThis as unknown as {
+  __pitch402Catalog?: { token?: AppToken; tracks?: Map<string, { track: SpotifyTrack | null; at: number }> }
+}
+const catalog = (globalForCatalog.__pitch402Catalog ??= {})
+const trackCache = (catalog.tracks ??= new Map())
+
+/** Long enough to spare Spotify a lookup per keystroke, short enough to stay fresh. */
+const TRACK_TTL_MS = 5 * 60 * 1000
+
+async function appToken(): Promise<string> {
+  const cached = catalog.token
+  if (cached && cached.expiresAt - Date.now() > 60_000) return cached.value
+  const token = await tokenRequest(new URLSearchParams({ grant_type: 'client_credentials' }))
+  catalog.token = { value: token.access_token, expiresAt: Date.now() + token.expires_in * 1000 }
+  return token.access_token
+}
+
+export type SpotifyTrack = {
+  id: string
+  uri: string
+  name: string
+  artists: string[]
+  album: { name: string; image: string | null; releaseDate: string | null }
+  durationMs: number
+  explicit: boolean
+  url: string
+}
+
+type RawTrack = {
+  id: string
+  name: string
+  uri: string
+  duration_ms: number
+  explicit: boolean
+  external_urls?: { spotify?: string }
+  artists?: { name: string }[]
+  album?: { name?: string; release_date?: string; images?: { url: string; width: number }[] }
+}
+
+/**
+ * Resolve a track id against the Spotify catalog.
+ *
+ * `null` means Spotify does not have it — a typo, a bad id, or a track pulled
+ * from the catalogue. Anything else throws, because a transient Spotify failure
+ * must not be reported to a buyer as "your track does not exist".
+ *
+ * Deliberately no `popularity`: it is a relative index, not a play count, and
+ * putting it on a pitching product invites reading it as performance. Pitch402
+ * does not show numbers Spotify cannot attribute to a playlist.
+ */
+export async function getTrack(trackId: string): Promise<SpotifyTrack | null> {
+  const hit = trackCache.get(trackId)
+  if (hit && Date.now() - hit.at < TRACK_TTL_MS) return hit.track
+
+  const res = await fetch(`${API}/tracks/${encodeURIComponent(trackId)}`, {
+    headers: { authorization: `Bearer ${await appToken()}` },
+    cache: 'no-store',
+  })
+  const text = await res.text()
+
+  if (res.status === 404 || res.status === 400) {
+    trackCache.set(trackId, { track: null, at: Date.now() })
+    return null
+  }
+  if (!res.ok) {
+    throw new SpotifyError('Could not look up the track', res.status, text.slice(0, 400))
+  }
+
+  const raw = JSON.parse(text) as RawTrack
+  // Spotify orders album images widest first; the last is the small thumbnail.
+  const images = raw.album?.images ?? []
+  const track: SpotifyTrack = {
+    id: raw.id,
+    uri: raw.uri,
+    name: raw.name,
+    artists: (raw.artists ?? []).map((a) => a.name),
+    album: {
+      name: raw.album?.name ?? '',
+      image: images[images.length - 1]?.url ?? images[0]?.url ?? null,
+      releaseDate: raw.album?.release_date ?? null,
+    },
+    durationMs: raw.duration_ms,
+    explicit: raw.explicit,
+    url: raw.external_urls?.spotify ?? `https://open.spotify.com/track/${raw.id}`,
+  }
+  trackCache.set(trackId, { track, at: Date.now() })
+  return track
+}
+
+/** Shape a track for an API response. */
+export function serializeTrack(track: SpotifyTrack) {
+  return {
+    id: track.id,
+    uri: track.uri,
+    name: track.name,
+    artists: track.artists,
+    artist: track.artists.join(', '),
+    album: track.album.name,
+    album_image: track.album.image,
+    release_date: track.album.releaseDate,
+    duration_ms: track.durationMs,
+    explicit: track.explicit,
+    url: track.url,
+  }
+}

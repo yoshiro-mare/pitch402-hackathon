@@ -20,3 +20,8 @@ export function normalizeTrackUri(input: unknown): string | null {
 
   return null
 }
+
+/** The bare 22-character id inside a normalized `spotify:track:<id>` URI. */
+export function trackIdFrom(uri: string): string {
+  return uri.slice('spotify:track:'.length)
+}
