@@ -14,7 +14,17 @@ type Playlist = {
   spots_remaining: number
   next_free_spot: number | null
   pricing: { tiers: Tier[]; term_multipliers: Record<string, number> }
+  payment: { default_network: string; networks: NetworkInfo[] }
   sold: { spot: number; amount: string; term: string; added_at: string; receipt_url: string }[]
+}
+
+type NetworkInfo = {
+  network: string
+  name: string
+  chain: string
+  settlement: 'live' | 'unavailable'
+  asset_address: string | null
+  default?: boolean
 }
 
 type Quote = {
@@ -31,7 +41,7 @@ type Receipt = {
   amount_paid: string
   track_uri: string
   added_at: string
-  payment: { method: string; settled: boolean; note: string }
+  payment: { method: string; settled: boolean; note: string; network: string; network_name: string }
 }
 
 const API = '/api/v1/playlists/demo'
@@ -42,6 +52,7 @@ export default function Home() {
   const [track, setTrack] = useState('https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT')
   const [spot, setSpot] = useState('')
   const [term, setTerm] = useState('cycle')
+  const [network, setNetwork] = useState('base-sepolia')
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -82,7 +93,7 @@ export default function Home() {
       const res = await fetch(`${API}/spots/${selected}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'X-PITCH402-FAKE-PAY': '1' },
-        body: JSON.stringify({ track_uri: track, term, buyer: 'demo-ui' }),
+        body: JSON.stringify({ track_uri: track, term, network, buyer: 'demo-ui' }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -110,7 +121,7 @@ export default function Home() {
         <h1 style={S.h1}>Pitch402</h1>
         <p style={S.sub}>
           A curator opens a 100-spot playlist. An artist or agent buys a numbered spot with USDC over
-          x402 on Base Sepolia. Cheaper spots sit lower in the list.
+          x402 — on Base Sepolia or HashKey Chain Testnet. Cheaper spots sit lower in the list.
         </p>
       </header>
 
@@ -123,6 +134,23 @@ export default function Home() {
 
       <section style={S.card}>
         <h2 style={S.h2}>Buy a spot</h2>
+
+        <div style={S.netRow}>
+          <span style={S.netLabel}>Pay on</span>
+          {(playlist?.payment.networks ?? []).map((n) => (
+            <button
+              key={n.network}
+              type="button"
+              onClick={() => setNetwork(n.network)}
+              className={`net ${network === n.network ? 'on' : ''}`}
+              title={`${n.name} · ${n.chain}`}
+            >
+              {n.name}
+              <small>{n.settlement === 'live' ? 'settles live' : 'demo pay only'}</small>
+            </button>
+          ))}
+        </div>
+
         <form onSubmit={buy} style={S.form}>
           <label style={S.label}>
             Spotify track URL
@@ -175,6 +203,7 @@ export default function Home() {
               <Row k="Paid" v={`${receipt.amount_paid} USDC (${receipt.term})`} />
               <Row k="Track" v={receipt.track_uri} />
               <Row k="Added" v={new Date(receipt.added_at).toLocaleTimeString()} />
+              <Row k="Network" v={receipt.payment.network_name ?? receipt.payment.network} />
               <Row k="Payment" v={`${receipt.payment.method} · settled: ${String(receipt.payment.settled)}`} />
             </dl>
             <p style={S.fine}>{receipt.payment.note}</p>
@@ -262,6 +291,12 @@ const CSS = `
 .sw { display:inline-block; width:.7rem; height:.7rem; border-radius:.2rem; border:1px solid #d7d7e0; vertical-align:middle; }
 .sw.t10 { background:#eef2ff; } .sw.t5 { background:#f5f3ff; } .sw.t3 { background:#f8fafc; }
 .sw.t1 { background:#fff; } .sw.taken { background:#f1f1f4; }
+.net { display:flex; flex-direction:column; align-items:flex-start; gap:.05rem; padding:.35rem .6rem;
+  border:1px solid #d7d7e0; border-radius:.4rem; background:#fff; font:inherit; font-size:.82rem;
+  color:#111; cursor:pointer; }
+.net small { font-size:.65rem; color:#777; }
+.net.on { border-color:#4f46e5; background:#eef2ff; }
+.net.on small { color:#4f46e5; }
 `
 
 const S: Record<string, React.CSSProperties> = {
@@ -275,6 +310,8 @@ const S: Record<string, React.CSSProperties> = {
   card: { border: '1px solid #e5e5ec', borderRadius: '.6rem', padding: '1rem', background: '#fff', marginBottom: '1.2rem' },
   h2: { margin: '0 0 .7rem', fontSize: '1rem' },
   form: { display: 'flex', flexDirection: 'column', gap: '.6rem' },
+  netRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '.4rem', marginBottom: '.8rem' },
+  netLabel: { fontSize: '.8rem', color: '#555', marginRight: '.2rem' },
   row: { display: 'flex', flexWrap: 'wrap', gap: '.6rem' },
   label: { display: 'flex', flexDirection: 'column', gap: '.25rem', fontSize: '.8rem', color: '#555' },
   input: { padding: '.45rem .55rem', border: '1px solid #d7d7e0', borderRadius: '.35rem', font: 'inherit', fontSize: '.85rem', color: '#111', background: '#fff' },

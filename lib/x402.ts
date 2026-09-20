@@ -1,6 +1,6 @@
 import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server'
 import { ExactEvmScheme } from '@x402/evm/exact/server'
-import { PAYMENT } from '@/config/pitch402.config'
+import { NETWORKS, PAY_TO, type NetworkConfig, type NetworkId } from '@/config/pitch402.config'
 import { markReceiptSettled } from '@/lib/store'
 
 type X402Globals = {
@@ -19,12 +19,33 @@ const x402 = (globalForX402.__pitch402X402 ??= {})
 
 const pending = (x402.pending ??= new Map<string, string>())
 
+/**
+ * Networks x402 can actually charge on: a facilitator exists and we know the
+ * asset address. HashKey Chain Testnet is advertised in quotes but has no
+ * facilitator, so it is not registered here and no payment is ever claimed.
+ */
+export function settlementNetworks(): NetworkConfig[] {
+  return Object.values(NETWORKS).filter(
+    (n) => n.settlement === 'live' && n.facilitator !== null && n.asset.address !== null,
+  )
+}
+
+export function canSettle(network: NetworkConfig): boolean {
+  return network.settlement === 'live' && network.facilitator !== null && network.asset.address !== null
+}
+
 export const resourceServer: x402ResourceServer = (x402.server ??= buildServer())
 
 function buildServer(): x402ResourceServer {
-  const server = new x402ResourceServer(
-    new HTTPFacilitatorClient({ url: PAYMENT.facilitator }),
-  ).register(PAYMENT.chain, new ExactEvmScheme())
+  const live = settlementNetworks()
+  // Every settleable network today shares one facilitator; the first is used
+  // as the client, and each network registers the exact-EVM scheme.
+  const facilitatorUrl = live[0]?.facilitator ?? 'https://x402.org/facilitator'
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: facilitatorUrl }))
+
+  for (const network of live) {
+    server.register(network.chain, new ExactEvmScheme())
+  }
 
   // Settlement finishes after the response is handed back, so the transaction
   // hash arrives here rather than in the route handler.
@@ -43,7 +64,9 @@ function buildServer(): x402ResourceServer {
 
 /** Dig the request path out of the loosely typed transport context. */
 function resourceFrom(context: { transportContext?: unknown }): string | null {
-  const transport = context.transportContext as { request?: { path?: string; adapter?: { getUrl?: () => string } } } | undefined
+  const transport = context.transportContext as
+    | { request?: { path?: string; adapter?: { getUrl?: () => string } } }
+    | undefined
   const url = transport?.request?.adapter?.getUrl?.()
   if (typeof url === 'string' && url) return url
   const path = transport?.request?.path
@@ -74,9 +97,9 @@ export function ensureX402Ready(): Promise<void> {
 
 /** A payout address must be configured before we can quote a real payment. */
 export function payTo(): string | null {
-  const value = PAYMENT.payTo
-  if (!value) return null
-  return /^0x[0-9a-fA-F]{40}$/.test(value.trim()) ? value.trim() : null
+  if (!PAY_TO) return null
+  const value = PAY_TO.trim()
+  return /^0x[0-9a-fA-F]{40}$/.test(value) ? value : null
 }
 
 export function x402Enabled(): boolean {
@@ -84,15 +107,20 @@ export function x402Enabled(): boolean {
 }
 
 /**
- * Price as an exact USDC amount rather than a "$1.00" string, so buyers are
- * charged the tier price in USDC with no conversion step. `extra` carries the
- * EIP-712 domain the exact-evm scheme signs over — both values read off the
- * verified contract (name "USDC", version "2").
+ * Price as an exact stablecoin amount rather than a "$1.00" string, so buyers
+ * are charged the tier price directly with no conversion step. `extra` carries
+ * the EIP-712 domain the exact-evm scheme signs over, read off the verified
+ * contract. Only called for networks that can settle, so the asset is known.
  */
-export function usdcPrice(amountAtomic: string) {
+export function assetPrice(network: NetworkConfig, amountAtomic: string) {
+  if (!network.asset.address || !network.asset.eip712) {
+    throw new Error(`no verified asset configured for ${network.id}`)
+  }
   return {
-    asset: PAYMENT.assetAddress,
+    asset: network.asset.address,
     amount: amountAtomic,
-    extra: { name: PAYMENT.eip712Name, version: PAYMENT.eip712Version },
+    extra: { name: network.asset.eip712.name, version: network.asset.eip712.version },
   }
 }
+
+export type { NetworkId }

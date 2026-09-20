@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server'
-import { PAYMENT } from '@/config/pitch402.config'
+import { networkFor } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
 import { getPlaylist, getReceipt } from '@/lib/store'
 
@@ -32,14 +32,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     payment: {
       method: receipt.paymentMethod,
       reference: receipt.paymentReference,
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
+      network: receipt.network,
+      network_name: networkFor(receipt.network).name,
+      chain: networkFor(receipt.network).chain,
       settled: receipt.settled,
       note:
         receipt.paymentMethod === 'fake'
-          ? 'DEMO ONLY. No USDC moved and nothing was settled onchain.'
+          ? `DEMO ONLY. No ${receipt.currency} moved and nothing was settled onchain (${networkFor(receipt.network).name}).`
           : receipt.settled
-            ? 'Settled via x402 on Base Sepolia.'
+            ? `Settled via x402 on ${networkFor(receipt.network).name}.`
             : 'Verified by the x402 facilitator; settlement not confirmed yet.',
     },
     added_at: receipt.addedAt,

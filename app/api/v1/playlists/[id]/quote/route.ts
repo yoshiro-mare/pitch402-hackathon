@@ -1,8 +1,10 @@
 import { type NextRequest } from 'next/server'
-import { DEFAULT_TERM, PAYMENT, isValidTerm } from '@/config/pitch402.config'
+import { DEFAULT_TERM, isValidTerm, networkFor } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
 import { getPlaylist, isTaken, nextFreeSpot } from '@/lib/store'
+import { acceptsList, resolveNetwork } from '@/lib/networks'
 import { priceFor, serializePrice } from '@/lib/pricing'
+import { payTo } from '@/lib/x402'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +22,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!isValidTerm(termParam)) {
     return error(400, 'invalid_term', `term must be one of cycle, 3m, 1y`, { got: termParam })
   }
+
+  const resolved = resolveNetwork(search.get('network'), undefined)
+  if ('error' in resolved) {
+    return error(400, 'invalid_network', 'network must be one of base-sepolia, hsk-testnet', {
+      got: resolved.got,
+    })
+  }
+  const network = networkFor(resolved.network)
 
   const wantsNext = search.get('next') === '1'
   const spotParam = search.get('spot')
@@ -97,21 +107,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     },
     payment: {
       protocol: 'x402',
-      status: 'not_enabled_yet',
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
-      asset: PAYMENT.asset,
-      facilitator: PAYMENT.facilitator,
+      selected_network: network.id,
+      settlement: network.settlement,
+      pay_to: payTo(),
+      // Both chains, priced identically in USDC units. Pick one with
+      // ?network=<id> or a "network" field in the buy request body.
+      accepts: acceptsList(price, payTo()),
     },
     next_action: {
       method: 'POST',
-      url: buyUrl,
+      url: `${buyUrl}?network=${network.id}&term=${termParam}`,
       body: {
         track_uri: 'spotify:track:<id>',
         term: termParam,
+        network: network.id,
       },
       description:
-        'POST to this URL to buy the spot. It will answer HTTP 402 with x402 payment requirements once payments are wired up.',
+        network.settlement === 'live'
+          ? 'POST to this URL to buy the spot. Without a payment it answers HTTP 402 with x402 payment requirements.'
+          : 'POST to this URL to buy the spot. This network has no confirmed facilitator, so settlement is unavailable — use demo (fake) pay, or switch to base-sepolia.',
     },
     note: 'Quote only. The price charged is snapshotted at payment and a paid spot is never repriced.',
   })

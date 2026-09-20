@@ -3,9 +3,10 @@ import { withX402 } from '@x402/next'
 import {
   DEFAULT_TERM,
   FAKE_PAY_HEADER,
-  PAYMENT,
   fakePayAllowed,
   isValidTerm,
+  networkFor,
+  type NetworkConfig,
   type Term,
 } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
@@ -21,12 +22,14 @@ import {
   type Receipt,
 } from '@/lib/store'
 import { normalizeTrackUri } from '@/lib/track'
+import { acceptsList, resolveNetwork } from '@/lib/networks'
 import {
+  assetPrice,
+  canSettle,
   ensureX402Ready,
   payTo,
   rememberPendingSettlement,
   resourceServer,
-  usdcPrice,
   x402Enabled,
 } from '@/lib/x402'
 
@@ -87,6 +90,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   const term: Term = termValue
 
+  const resolvedNetwork = resolveNetwork(req.nextUrl.searchParams.get('network'), body.network)
+  if ('error' in resolvedNetwork) {
+    return error(
+      400,
+      resolvedNetwork.error === 'conflict' ? 'network_conflict' : 'invalid_network',
+      resolvedNetwork.error === 'conflict'
+        ? 'network in the query string and the body disagree'
+        : 'network must be one of base-sepolia, hsk-testnet',
+      { got: resolvedNetwork.got },
+    )
+  }
+  const network = networkFor(resolvedNetwork.network)
+
   // Reject a taken spot before any payment is described or charged.
   if (isTaken(playlist, spot)) {
     return takenResponse(base, playlist, spot, term)
@@ -106,7 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // cannot reprice a spot that someone already bought.
   const price = priceFor(spot, term)
 
-  const purchase = { spot, trackUri, buyer, term, price }
+  const purchase = { spot, trackUri, buyer, term, price, network }
 
   if (req.headers.get(FAKE_PAY_HEADER) === '1') {
     if (!fakePayAllowed()) {
@@ -115,6 +131,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     }
     return settle(base, playlist, purchase, 'fake')
+  }
+
+  // Advertised network with no facilitator: say so plainly instead of issuing
+  // payment requirements nobody can settle.
+  if (!canSettle(network)) {
+    return settlementUnavailableResponse(base, playlist, purchase)
   }
 
   // No payout address configured — describe the payment we would want rather
@@ -132,6 +154,7 @@ type Purchase = {
   buyer: string | null
   term: Term
   price: Price
+  network: NetworkConfig
 }
 
 /**
@@ -154,7 +177,7 @@ async function paidPost(
     await ensureX402Ready()
   } catch (err) {
     return error(503, 'facilitator_unavailable', 'could not reach the x402 facilitator', {
-      facilitator: PAYMENT.facilitator,
+      facilitator: purchase.network.facilitator,
       detail: err instanceof Error ? err.message : String(err),
     })
   }
@@ -181,13 +204,13 @@ async function paidPost(
       [ROUTE_PATTERN]: {
         accepts: {
           scheme: 'exact',
-          network: PAYMENT.chain,
+          network: purchase.network.chain,
           payTo: address,
-          price: usdcPrice(purchase.price.amountAtomic),
+          price: assetPrice(purchase.network, purchase.price.amountAtomic),
           maxTimeoutSeconds: 120,
         },
         resource,
-        description: `Pitch402 spot ${purchase.spot} on "${playlist.name}" (cycle ${playlist.cycle}, term ${purchase.term})`,
+        description: `Pitch402 spot ${purchase.spot} on "${playlist.name}" (cycle ${playlist.cycle}, term ${purchase.term}, ${purchase.network.name})`,
         mimeType: 'application/json',
         unpaidResponseBody: () => ({
           contentType: 'application/json',
@@ -238,6 +261,7 @@ async function settle(
       term: purchase.term,
       trackUri: purchase.trackUri,
       buyer: purchase.buyer,
+      network: purchase.network.id,
       paymentMethod: method,
       paymentReference: null,
     })
@@ -299,15 +323,14 @@ function quoteBody(base: string, playlist: Playlist, purchase: Purchase, address
     price: serializePrice(purchase.price),
     payment: {
       protocol: 'x402',
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
-      asset: PAYMENT.asset,
-      asset_address: PAYMENT.assetAddress,
-      asset_address_verified: PAYMENT.assetAddressVerified,
+      selected_network: purchase.network.id,
+      settlement: purchase.network.settlement,
       pay_to: address,
-      facilitator: PAYMENT.facilitator,
+      // Both chains, priced identically in USDC units. Choose with
+      // ?network=<id> or a "network" field in the body.
+      accepts: acceptsList(purchase.price, address),
     },
-    quote_url: `${base}/api/v1/playlists/${playlist.id}/quote?spot=${purchase.spot}&term=${purchase.term}`,
+    quote_url: `${base}/api/v1/playlists/${playlist.id}/quote?spot=${purchase.spot}&term=${purchase.term}&network=${purchase.network.id}`,
     fake_payment: fakePayAllowed()
       ? { header: 'X-PITCH402-FAKE-PAY: 1', description: 'Demo shortcut. No wallet, no onchain transfer.' }
       : null,
@@ -322,11 +345,31 @@ function unconfiguredPaymentResponse(base: string, playlist: Playlist, purchase:
       x402Version: 2,
       error: 'payment_unavailable',
       message: 'This server has no payout address configured, so it cannot accept x402 payments yet.',
-      hint: 'Set PITCH402_PAY_TO to an address on Base Sepolia and restart.',
+      hint: 'Set PITCH402_PAY_TO to an EVM address and restart. The same address works on both testnets.',
       ...quoteBody(base, playlist, purchase, '0x0000000000000000000000000000000000000000'),
       fake_payment: fakePayAllowed()
         ? { header: 'X-PITCH402-FAKE-PAY: 1', description: 'Demo shortcut. No wallet, no onchain transfer.' }
         : null,
+    },
+    { status: 402 },
+  )
+}
+
+/**
+ * 402 for a network we advertise but cannot settle on. The spot is still for
+ * sale — just not payable here yet — so the response names what will work
+ * rather than issuing requirements no facilitator would honour.
+ */
+function settlementUnavailableResponse(base: string, playlist: Playlist, purchase: Purchase): Response {
+  return json(
+    {
+      x402Version: 2,
+      error: 'settlement_unavailable_on_network',
+      message: `${purchase.network.name} is advertised for network coverage, but no x402 facilitator is confirmed for ${purchase.network.chain}, so a payment here cannot be settled yet.`,
+      hint: fakePayAllowed()
+        ? 'Use the demo header X-PITCH402-FAKE-PAY: 1 on this network, or buy on base-sepolia for a real x402 payment.'
+        : 'Buy on base-sepolia for a real x402 payment.',
+      ...quoteBody(base, playlist, purchase, payTo() ?? '0x0000000000000000000000000000000000000000'),
     },
     { status: 402 },
   )
@@ -350,12 +393,13 @@ function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist) {
     payment: {
       method: receipt.paymentMethod,
       reference: receipt.paymentReference,
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
+      network: receipt.network,
+      network_name: networkFor(receipt.network).name,
+      chain: networkFor(receipt.network).chain,
       settled: receipt.settled,
       note:
         receipt.paymentMethod === 'fake'
-          ? 'DEMO ONLY. No USDC moved and nothing was settled onchain.'
+          ? `DEMO ONLY. No ${receipt.currency} moved and nothing was settled onchain (${networkFor(receipt.network).name}).`
           : 'Verified by the x402 facilitator. Settlement completes after this response; the transaction hash lands on the receipt and in the PAYMENT-RESPONSE header.',
     },
     added_at: receipt.addedAt,

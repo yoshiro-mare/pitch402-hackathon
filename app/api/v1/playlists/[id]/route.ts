@@ -1,8 +1,9 @@
 import { type NextRequest } from 'next/server'
-import { PAYMENT } from '@/config/pitch402.config'
+import { USDC_DECIMALS } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
 import { getPlaylist, nextFreeSpot, publicTerms, spotsRemaining } from '@/lib/store'
 import { priceFor } from '@/lib/pricing'
+import { networkSummaries } from '@/lib/networks'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,18 +30,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     next_free_spot: next,
     pricing: {
       currency: 'USDC',
-      decimals: PAYMENT.decimals,
+      decimals: USDC_DECIMALS,
       tiers,
       term_multipliers: termMultipliers,
       note: 'Price is snapshotted at payment. A paid spot is never repriced.',
     },
     payment: {
       protocol: 'x402',
-      status: 'not_enabled_yet',
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
-      asset: PAYMENT.asset,
-      facilitator: PAYMENT.facilitator,
+      default_network: 'base-sepolia',
+      networks: networkSummaries(),
     },
     spotify: {
       playlist_id: playlist.spotifyPlaylistId,
@@ -52,6 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       amount: s.amount,
       currency: 'USDC',
       term: s.term,
+      network: s.network,
       added_at: s.addedAt,
       receipt_url: `${base}/api/v1/receipts/${s.receiptId}`,
     })),

@@ -37,11 +37,28 @@ Estimates only if curator later uploads Spotify for Artists data, and must be la
 
 ## Stack
 - App: Next.js + TypeScript
-- Payments: x402 on Base Sepolia first (eip155:84532), facilitator https://x402.org/facilitator
-- USDC Base Sepolia: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
-  VERIFIED 2026-09-19 by eth_call on chain 84532: symbol() USDC, name() USDC,
-  decimals() 6, EIP-712 version() 2, contract has code. Matches @x402/evm.
-  The old value here ended 634e7926541e and has no contract on Base Sepolia.
+- Payments: x402. Two testnets, default base-sepolia. Never mainnet.
+
+### Networks (source of truth: config/pitch402.config.ts)
+1. Base Sepolia — DEFAULT, settlement live
+   - caip2 eip155:84532, chainId 84532
+   - USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+     VERIFIED 2026-09-19 by eth_call on chain 84532: symbol() USDC, name() USDC,
+     decimals() 6, EIP-712 version() 2, contract has code. Matches @x402/evm.
+     The old value here ended 634e7926541e and has no contract on Base Sepolia.
+   - facilitator https://x402.org/facilitator
+2. HashKey Chain Testnet — advertised, settlement unavailable
+   - caip2 eip155:133, chainId 133 (RPC confirmed live 2026-09-20)
+   - rpc https://testnet.hsk.xyz, explorer https://testnet-explorer.hsk.xyz
+   - native HSK
+   - facilitator: NONE confirmed. x402.org lists eip155:84532 + Solana only.
+     Never claim x402.org settles HSK.
+   - asset: TBD. No testnet stablecoin address verified onchain — left null in
+     config rather than guessed. Use fake pay on this network.
+     Do NOT use HashKey mainnet USDC.e here.
+
+Client picks a network with ?network=base-sepolia|hsk-testnet or body "network".
+Default stays base-sepolia. Receipts record the network chosen.
 - Contracts: Foundry, ONE contract for inventory + receipts. No token. No AMM.
 - Spotify Web API: create/read/add items on curator-owned playlist only
 
@@ -58,6 +75,9 @@ Estimates only if curator later uploads Spotify for Artists data, and must be la
 - Do not create a token
 - Do not scrape Spotify
 - Do not start on Base mainnet
+- Do not use HashKey mainnet
+- Do not claim any facilitator settles HashKey Chain Testnet
+- Do not add Tempo. Do not add Ethereum mainnet
 - Do not put private keys in git
 - Do not promise guaranteed Spotify algorithm streams
 - Say "onchain" not "on-chain"

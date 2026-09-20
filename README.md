@@ -3,8 +3,8 @@
 **Paid playlist pitching that an AI agent can complete on its own, with no human in the loop.**
 
 A curator opens a playlist with 100 numbered spots. An artist — or the agent working on their behalf —
-buys a spot with USDC over [x402](https://x402.org), the HTTP 402 payment protocol, on Base Sepolia.
-Buying a spot places the track on the curator's own Spotify playlist.
+buys a spot with USDC over [x402](https://x402.org), the HTTP 402 payment protocol, on Base Sepolia or
+HashKey Chain Testnet. Buying a spot places the track on the curator's own Spotify playlist.
 
 The API is the product. Every step (browse, quote, pay, receipt) is a plain HTTP call that returns the
 exact URL to call next, so an agent needs no scraping, no login, and no human approval to pitch a track.
@@ -37,6 +37,7 @@ bought.
 - **Price snapshotting.** The amount is fixed at payment. Changing the tiers later never reprices a spot someone already bought.
 - **Sold-out handling.** Ask for a taken spot and the API answers with the next free spot, its price, and the URL to buy it.
 - **x402 payments on Base Sepolia.** An unpaid request answers `402` with signed payment requirements; a paid one returns the receipt.
+- **Two networks, one price.** Base Sepolia (default, settles live) and HashKey Chain Testnet, selectable per request with `?network=` or a body field. Every 402 and quote lists both.
 - **Agent discovery.** `/.well-known/agent.json` and `/llms.txt` describe the whole service to a crawling agent.
 - **No wallet needed to evaluate.** A demo mode completes a purchase end to end with no wallet, for judging and local development.
 
@@ -66,7 +67,8 @@ take real payments.
 # .env.local
 
 # Address that receives USDC. Required before real x402 payments can be quoted.
-PITCH402_PAY_TO=0xYourBaseSepoliaAddress
+# The same EVM address works on both testnets.
+PITCH402_PAY_TO=0xYourEvmAddress
 
 # Allows the demo fake-pay header outside development. Leave unset in production.
 PITCH402_ALLOW_FAKE_PAY=1
@@ -103,7 +105,7 @@ curl -s "http://localhost:3000/api/v1/playlists/demo/quote?spot=1" | python3 -m 
 ```
 
 **4. Show the real payment demand.** Without the demo header, the same purchase endpoint answers 402
-with x402 payment requirements:
+with x402 payment requirements. Both networks appear in the body's `payment.accepts` list:
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1/playlists/demo/spots/2 \
@@ -135,22 +137,50 @@ curl -s -D - -o /dev/null -X POST http://localhost:3000/api/v1/playlists/demo/sp
 }
 ```
 
-**5. Show how an agent finds all of this unaided:** <http://localhost:3000/llms.txt> and
+**5. Show the second network.** The same purchase on HashKey Chain Testnet says plainly that no
+facilitator is confirmed for chain 133, rather than issuing requirements nobody can honour:
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/playlists/demo/spots/3?network=hsk-testnet" \
+  -H 'content-type: application/json' \
+  -d '{"track_uri":"spotify:track:4cOdK2wGLETKBW3PvgPWqT"}' | python3 -m json.tool
+```
+
+Demo pay works on either network, and the receipt records which one was used:
+
+```bash
+curl -s -X POST "http://localhost:3000/api/v1/playlists/demo/spots/3?network=hsk-testnet" \
+  -H 'content-type: application/json' -H 'X-PITCH402-FAKE-PAY: 1' \
+  -d '{"track_uri":"spotify:track:4cOdK2wGLETKBW3PvgPWqT"}' | python3 -m json.tool
+```
+
+**6. Show how an agent finds all of this unaided:** <http://localhost:3000/llms.txt> and
 <http://localhost:3000/.well-known/agent.json>.
 
 ---
 
 ## Technical integration
 
-**Payments — x402 on Base Sepolia.** The purchase endpoint is wrapped with the official `@x402/next`
-resource server against the public facilitator at `https://x402.org/facilitator`, network
-`eip155:84532`. Prices are quoted as exact USDC amounts rather than dollar strings, so no conversion
-sits between the quoted price and the charged one. Settlement runs only after the handler succeeds, so
-a spot that gets taken mid-request returns `409` and the buyer is never charged; if settlement then
-fails, the spot is released and the receipt is deleted.
+**Payments — x402, two testnets.** The purchase endpoint is wrapped with the official `@x402/next`
+resource server against the public facilitator at `https://x402.org/facilitator`. Prices are quoted as
+exact USDC amounts rather than dollar strings, so no conversion sits between the quoted price and the
+charged one. Settlement runs only after the handler succeeds, so a spot that gets taken mid-request
+returns `409` and the buyer is never charged; if settlement then fails, the spot is released and the
+receipt is deleted.
 
-The Base Sepolia USDC address `0x036CbD53842c5426634e7929541eC2318f3dCF7e` was verified by `eth_call`
-against chain 84532 before it was hardcoded: `symbol()` USDC, `decimals()` 6, EIP-712 `version()` 2.
+| Network | CAIP-2 | Asset | Settlement |
+| --- | --- | --- | --- |
+| **Base Sepolia** (default) | `eip155:84532` | USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | Live via `x402.org/facilitator` |
+| HashKey Chain Testnet | `eip155:133` | TBD — no verified testnet address | None confirmed; demo pay only |
+
+Pick a network with `?network=base-sepolia` or `?network=hsk-testnet`, or a `"network"` field in the
+buy body. The query string wins if both are sent. Prices are identical USDC amounts on either chain,
+and the receipt records which network was chosen.
+
+The Base Sepolia USDC address was verified by `eth_call` against chain 84532 before it was hardcoded:
+`symbol()` USDC, `decimals()` 6, EIP-712 `version()` 2. HashKey Chain Testnet's chain id (133) and RPC
+were confirmed the same way; its stablecoin address is deliberately left `null` in config rather than
+guessed, because a wrong token address loses funds. HashKey **mainnet** is not used.
 
 **Spotify — planned, not connected.** The intended flow is the curator authorising once with OAuth so
 the service can add tracks to a playlist they own. Artists never authorise anything. The service will
@@ -190,7 +220,12 @@ This is a hackathon build. What is not yet true:
   contract yet, so nothing survives a restart.
 - **Nothing reaches Spotify.** A purchase records the track against the spot. It does not add the track
   to any playlist. The Spotify integration is designed but not built.
-- **No token, no AMM, no mainnet.** Base Sepolia only.
+- **HashKey Chain Testnet is listed, not settled.** It is wired in for the hackathon's chain
+  requirement: quotes and 402 responses advertise it, demo pay works on it, and receipts record it.
+  Live facilitator settlement is verified on Base Sepolia only — no facilitator is confirmed for
+  chain 133, and we do not claim otherwise. Its stablecoin address is unresolved, so it is served as
+  `null` rather than a guess.
+- **No token, no AMM, no mainnet.** Testnets only.
 
 We would rather show you a working payment demand and say plainly what is stubbed than claim a
 placement pipeline that does not exist.

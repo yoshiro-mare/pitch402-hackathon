@@ -1,7 +1,8 @@
 import { type NextRequest } from 'next/server'
-import { PAYMENT, SPOTS_PER_CYCLE } from '@/config/pitch402.config'
+import { DEFAULT_NETWORK, SPOTS_PER_CYCLE, USDC_DECIMALS } from '@/config/pitch402.config'
 import { baseUrl, json } from '@/lib/http'
 import { publicTerms } from '@/lib/store'
+import { networkSummaries } from '@/lib/networks'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,12 +20,12 @@ export async function GET(req: NextRequest) {
     documentation: `${base}/llms.txt`,
     payment: {
       protocol: 'x402',
-      status: 'not_enabled_yet',
-      network: PAYMENT.network,
-      chain: PAYMENT.chain,
-      asset: PAYMENT.asset,
-      decimals: PAYMENT.decimals,
-      facilitator: PAYMENT.facilitator,
+      default_network: DEFAULT_NETWORK,
+      currency: 'USDC',
+      decimals: USDC_DECIMALS,
+      // Choose with ?network=<id> on a quote, or a "network" field when buying.
+      networks: networkSummaries(),
+      note: 'Settlement is live on base-sepolia only. Other networks are advertised for coverage and accept demo payments.',
     },
     pricing: {
       currency: 'USDC',
@@ -65,6 +66,7 @@ export async function GET(req: NextRequest) {
       description: 'Quote the next free spot on the demo cycle, then POST to the returned next_action.url.',
     },
     honesty: [
+      'Settlement is verified on Base Sepolia only. HashKey Chain Testnet is listed for network coverage; no facilitator is confirmed for it.',
       'Curator-owned playlists only. Never Spotify editorial playlists.',
       'No stream counts or royalty figures. The Spotify Web API does not expose playlist-attributed plays.',
       'No guaranteed algorithmic streams.',

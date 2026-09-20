@@ -4,6 +4,7 @@ import {
   TERM_MULTIPLIERS,
   TIERS,
   USDC_DECIMALS,
+  type NetworkId,
   type Term,
 } from '@/config/pitch402.config'
 
@@ -20,6 +21,8 @@ export type SoldSpot = {
   term: Term
   trackUri: string
   buyer: string | null
+  /** which chain the buyer chose to pay on */
+  network: NetworkId
   addedAt: string
   receiptId: string
 }
@@ -116,6 +119,7 @@ export type SellInput = {
   term: Term
   trackUri: string
   buyer: string | null
+  network: NetworkId
   paymentMethod: 'x402' | 'fake'
   paymentReference: string | null
 }
@@ -138,6 +142,7 @@ export function sellSpot(playlist: Playlist, input: SellInput): Receipt {
     term: input.term,
     trackUri: input.trackUri,
     buyer: input.buyer,
+    network: input.network,
     addedAt: new Date().toISOString(),
     receiptId,
   }
