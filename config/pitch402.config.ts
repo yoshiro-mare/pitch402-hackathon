@@ -48,12 +48,18 @@ export const PAYMENT = {
   decimals: USDC_DECIMALS,
   facilitator: 'https://x402.org/facilitator',
   /**
-   * Base Sepolia USDC. NOT YET VERIFIED — ethskills addresses/SKILL.md covers
-   * mainnet only. Verify on the Base Sepolia explorer / Circle docs before any
-   * transfer is wired up. Nothing reads this for a transaction yet.
+   * Base Sepolia USDC. Verified 2026-09-19 against chain 84532 by eth_call:
+   * symbol() "USDC", name() "USDC", decimals() 6, EIP-712 version() "2", and
+   * the address has code. Matches the address shipped in @x402/evm.
+   *
+   * Note: the address in CLAUDE.md (…634e7926541e…) has no code on Base
+   * Sepolia — it is one character off from this one (…634e7929541e…).
    */
-  assetAddress: '0x036CbD53842c5426634e7926541eC2318f3dCF7e',
-  assetAddressVerified: false,
+  assetAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  assetAddressVerified: true,
+  /** EIP-712 domain of the USDC contract above, read from the contract. */
+  eip712Name: 'USDC',
+  eip712Version: '2',
   /**
    * Where buyers pay. Set PITCH402_PAY_TO in .env.local — never hardcode an
    * address here and never commit a key. null means payments are unconfigured.

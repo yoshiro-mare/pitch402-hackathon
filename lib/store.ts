@@ -33,6 +33,8 @@ export type Receipt = SoldSpot & {
   /** how the payment was settled: a real x402 payment, or the demo shortcut */
   paymentMethod: 'x402' | 'fake'
   paymentReference: string | null
+  /** true once the facilitator confirms settlement; fake payments never settle */
+  settled: boolean
 }
 
 export type Playlist = {
@@ -153,9 +155,34 @@ export function sellSpot(playlist: Playlist, input: SellInput): Receipt {
     decimals: USDC_DECIMALS,
     paymentMethod: input.paymentMethod,
     paymentReference: input.paymentReference,
+    settled: false,
   }
   receipts.set(receiptId, receipt)
   return receipt
+}
+
+/**
+ * Undo a sale. Used when a payment is verified but settlement then fails, so a
+ * spot is never held against money that never moved.
+ */
+export function releaseSpot(playlistId: string, receiptId: string): boolean {
+  const playlist = playlists.get(playlistId)
+  if (!playlist) return false
+  const index = playlist.sold.findIndex((s) => s.receiptId === receiptId)
+  if (index === -1) return false
+  playlist.sold.splice(index, 1)
+  receipts.delete(receiptId)
+  if (playlist.status === 'full') playlist.status = 'open'
+  return true
+}
+
+/** Record the settlement transaction once the facilitator confirms it. */
+export function markReceiptSettled(receiptId: string, reference: string | null): boolean {
+  const receipt = receipts.get(receiptId)
+  if (!receipt) return false
+  receipt.paymentReference = reference
+  receipt.settled = true
+  return true
 }
 
 export class SpotTakenError extends Error {

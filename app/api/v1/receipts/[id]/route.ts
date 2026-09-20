@@ -34,11 +34,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       reference: receipt.paymentReference,
       network: PAYMENT.network,
       chain: PAYMENT.chain,
-      settled: receipt.paymentMethod === 'x402',
+      settled: receipt.settled,
       note:
         receipt.paymentMethod === 'fake'
           ? 'DEMO ONLY. No USDC moved and nothing was settled onchain.'
-          : 'Settled via x402.',
+          : receipt.settled
+            ? 'Settled via x402 on Base Sepolia.'
+            : 'Verified by the x402 facilitator; settlement not confirmed yet.',
     },
     added_at: receipt.addedAt,
     playlist_url: `${base}/api/v1/playlists/${receipt.playlistId}`,

@@ -1,4 +1,5 @@
-import { type NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { withX402 } from '@x402/next'
 import {
   DEFAULT_TERM,
   FAKE_PAY_HEADER,
@@ -8,11 +9,31 @@ import {
   type Term,
 } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
-import { priceFor, serializePrice } from '@/lib/pricing'
-import { SpotTakenError, getPlaylist, isTaken, nextFreeSpot, sellSpot, type Playlist, type Receipt } from '@/lib/store'
+import { priceFor, serializePrice, type Price } from '@/lib/pricing'
+import {
+  SpotTakenError,
+  getPlaylist,
+  isTaken,
+  nextFreeSpot,
+  releaseSpot,
+  sellSpot,
+  type Playlist,
+  type Receipt,
+} from '@/lib/store'
 import { normalizeTrackUri } from '@/lib/track'
+import {
+  ensureX402Ready,
+  payTo,
+  rememberPendingSettlement,
+  resourceServer,
+  usdcPrice,
+  x402Enabled,
+} from '@/lib/x402'
 
 export const dynamic = 'force-dynamic'
+
+/** Must match the served path exactly or withX402 skips payment protection. */
+const ROUTE_PATTERN = '/api/v1/playlists/[id]/spots/[n]'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; n: string }> }) {
   const { id, n } = await params
@@ -38,17 +59,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
   }
 
-  const body = await readBody(req)
+  // Read the body once here: the x402 wrapper may also inspect the request, and
+  // a body can only be consumed a single time.
+  const raw = await req.text()
+  const body = parseBody(raw)
   if (body === null) {
     return error(400, 'invalid_body', 'body must be JSON')
   }
 
-  const term = body.term === undefined ? DEFAULT_TERM : body.term
-  if (typeof term !== 'string' || !isValidTerm(term)) {
-    return error(400, 'invalid_term', 'term must be one of cycle, 3m, 1y', { got: body.term })
+  // Term can come from the query string or the body. The query string wins,
+  // because the paid flow prices the request before the body is in play.
+  const queryTerm = req.nextUrl.searchParams.get('term')
+  const bodyTerm = body.term === undefined ? null : body.term
+  if (bodyTerm !== null && typeof bodyTerm !== 'string') {
+    return error(400, 'invalid_term', 'term must be one of cycle, 3m, 1y', { got: bodyTerm })
   }
+  if (queryTerm !== null && bodyTerm !== null && queryTerm !== bodyTerm) {
+    return error(400, 'term_conflict', 'term in the query string and the body disagree', {
+      query: queryTerm,
+      body: bodyTerm,
+      hint: 'Send term in the query string for paid requests.',
+    })
+  }
+  const termValue = queryTerm ?? bodyTerm ?? DEFAULT_TERM
+  if (!isValidTerm(termValue)) {
+    return error(400, 'invalid_term', 'term must be one of cycle, 3m, 1y', { got: termValue })
+  }
+  const term: Term = termValue
 
-  // Taken spots are rejected before payment is even described.
+  // Reject a taken spot before any payment is described or charged.
   if (isTaken(playlist, spot)) {
     return takenResponse(base, playlist, spot, term)
   }
@@ -63,39 +102,148 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const buyer = typeof body.buyer === 'string' && body.buyer.trim() ? body.buyer.trim() : null
 
-  // Price snapshot. Everything below stores this exact amount; it is never
-  // recomputed, so a later tier change cannot reprice a paid spot.
+  // Price snapshot. Stored as paid and never recomputed, so a later tier change
+  // cannot reprice a spot that someone already bought.
   const price = priceFor(spot, term)
 
-  const fakePayHeader = req.headers.get(FAKE_PAY_HEADER)
-  const wantsFakePay = fakePayHeader === '1'
+  const purchase = { spot, trackUri, buyer, term, price }
 
-  if (!wantsFakePay) {
-    return paymentRequiredResponse(base, playlist, spot, term, price)
+  if (req.headers.get(FAKE_PAY_HEADER) === '1') {
+    if (!fakePayAllowed()) {
+      return error(403, 'fake_pay_disabled', 'fake payments are disabled in this environment', {
+        hint: 'Pay with x402 instead.',
+      })
+    }
+    return settle(base, playlist, purchase, 'fake')
   }
 
-  if (!fakePayAllowed()) {
-    return error(403, 'fake_pay_disabled', 'fake payments are disabled in this environment', {
-      hint: 'Pay with x402 instead.',
+  // No payout address configured — describe the payment we would want rather
+  // than handing x402 an unusable route config.
+  if (!x402Enabled()) {
+    return unconfiguredPaymentResponse(base, playlist, purchase)
+  }
+
+  return paidPost(req, raw, base, playlist, purchase)
+}
+
+type Purchase = {
+  spot: number
+  trackUri: string
+  buyer: string | null
+  term: Term
+  price: Price
+}
+
+/**
+ * The real x402 path. withX402 answers 402 with signed payment requirements
+ * when no payment is attached, verifies an attached payment before the handler
+ * runs, and settles only after the handler returns a status below 400 — so a
+ * spot that gets taken in the meantime returns 409 and nothing is charged.
+ */
+async function paidPost(
+  req: NextRequest,
+  raw: string,
+  base: string,
+  playlist: Playlist,
+  purchase: Purchase,
+): Promise<Response> {
+  const address = payTo()
+  if (!address) return unconfiguredPaymentResponse(base, playlist, purchase)
+
+  try {
+    await ensureX402Ready()
+  } catch (err) {
+    return error(503, 'facilitator_unavailable', 'could not reach the x402 facilitator', {
+      facilitator: PAYMENT.facilitator,
+      detail: err instanceof Error ? err.message : String(err),
     })
   }
 
+  const resource = `${base}/api/v1/playlists/${playlist.id}/spots/${purchase.spot}`
+  let receiptId: string | null = null
+
+  const handler = async (): Promise<NextResponse> => {
+    // Re-check under the verified payment: another buyer may have taken it.
+    if (isTaken(playlist, purchase.spot)) {
+      const taken = await takenResponse(base, playlist, purchase.spot, purchase.term).json()
+      return NextResponse.json(taken, { status: 409 })
+    }
+    const response = await settle(base, playlist, purchase, 'x402')
+    const payload = (await response.clone().json()) as { receipt_id?: string }
+    receiptId = payload.receipt_id ?? null
+    if (receiptId) rememberPendingSettlement(resource, receiptId)
+    return NextResponse.json(payload, { status: response.status })
+  }
+
+  const wrapped = withX402(
+    handler,
+    {
+      [ROUTE_PATTERN]: {
+        accepts: {
+          scheme: 'exact',
+          network: PAYMENT.chain,
+          payTo: address,
+          price: usdcPrice(purchase.price.amountAtomic),
+          maxTimeoutSeconds: 120,
+        },
+        resource,
+        description: `Pitch402 spot ${purchase.spot} on "${playlist.name}" (cycle ${playlist.cycle}, term ${purchase.term})`,
+        mimeType: 'application/json',
+        unpaidResponseBody: () => ({
+          contentType: 'application/json',
+          body: quoteBody(base, playlist, purchase, address),
+        }),
+        // Payment verified but settlement failed: give the spot back rather
+        // than holding it against money that never moved.
+        settlementFailedResponseBody: (_context, result) => {
+          if (receiptId) releaseSpot(playlist.id, receiptId)
+          return {
+            contentType: 'application/json',
+            body: {
+              error: {
+                code: 'settlement_failed',
+                message: 'Payment did not settle. The spot was released and you were not charged.',
+                reason: result.errorReason ?? null,
+              },
+              ...quoteBody(base, playlist, purchase, address),
+            },
+          }
+        },
+      },
+    },
+    resourceServer,
+    undefined,
+    undefined,
+    false,
+  )
+
+  // The body was already consumed above, so hand the wrapper a fresh request.
+  const replay = new NextRequest(req.url, { method: 'POST', headers: req.headers, body: raw })
+  return wrapped(replay)
+}
+
+/** Take the spot and build the receipt. Shared by the fake and x402 paths. */
+async function settle(
+  base: string,
+  playlist: Playlist,
+  purchase: Purchase,
+  method: 'fake' | 'x402',
+): Promise<Response> {
   let receipt: Receipt
   try {
     receipt = sellSpot(playlist, {
-      spot,
-      amountAtomic: price.amountAtomic,
-      amount: price.amount,
-      term,
-      trackUri,
-      buyer,
-      paymentMethod: 'fake',
+      spot: purchase.spot,
+      amountAtomic: purchase.price.amountAtomic,
+      amount: purchase.price.amount,
+      term: purchase.term,
+      trackUri: purchase.trackUri,
+      buyer: purchase.buyer,
+      paymentMethod: method,
       paymentReference: null,
     })
   } catch (err) {
-    // Lost a race against another buyer between the check above and the write.
     if (err instanceof SpotTakenError) {
-      return takenResponse(base, playlist, spot, term)
+      return takenResponse(base, playlist, purchase.spot, purchase.term)
     }
     throw err
   }
@@ -106,8 +254,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })
 }
 
-async function readBody(req: NextRequest): Promise<Record<string, unknown> | null> {
-  const raw = await req.text()
+function parseBody(raw: string): Record<string, unknown> | null {
   if (!raw.trim()) return {}
   try {
     const parsed: unknown = JSON.parse(raw)
@@ -122,10 +269,7 @@ function takenResponse(base: string, playlist: Playlist, spot: number, term: Ter
   const next = nextFreeSpot(playlist)
   return json(
     {
-      error: {
-        code: 'spot_taken',
-        message: `spot ${spot} is already taken`,
-      },
+      error: { code: 'spot_taken', message: `spot ${spot} is already taken` },
       playlist_id: playlist.id,
       cycle: playlist.cycle,
       spot,
@@ -144,65 +288,45 @@ function takenResponse(base: string, playlist: Playlist, spot: number, term: Ter
   )
 }
 
-/**
- * HTTP 402 with x402-shaped payment requirements. Hand-rolled on purpose —
- * the real x402 SDK lands in the next pass, and this keeps the response shape
- * visible while we demo.
- */
-function paymentRequiredResponse(
-  base: string,
-  playlist: Playlist,
-  spot: number,
-  term: Term,
-  price: ReturnType<typeof priceFor>,
-): Response {
-  const resource = `${base}/api/v1/playlists/${playlist.id}/spots/${spot}`
+/** Quote details attached to the 402 body alongside x402's own requirements. */
+function quoteBody(base: string, playlist: Playlist, purchase: Purchase, address: string) {
+  return {
+    playlist_id: playlist.id,
+    playlist_name: playlist.name,
+    cycle: playlist.cycle,
+    spot: purchase.spot,
+    term: purchase.term,
+    price: serializePrice(purchase.price),
+    payment: {
+      protocol: 'x402',
+      network: PAYMENT.network,
+      chain: PAYMENT.chain,
+      asset: PAYMENT.asset,
+      asset_address: PAYMENT.assetAddress,
+      asset_address_verified: PAYMENT.assetAddressVerified,
+      pay_to: address,
+      facilitator: PAYMENT.facilitator,
+    },
+    quote_url: `${base}/api/v1/playlists/${playlist.id}/quote?spot=${purchase.spot}&term=${purchase.term}`,
+    fake_payment: fakePayAllowed()
+      ? { header: 'X-PITCH402-FAKE-PAY: 1', description: 'Demo shortcut. No wallet, no onchain transfer.' }
+      : null,
+    note: 'Price is snapshotted at payment. A paid spot is never repriced.',
+  }
+}
+
+/** 402 for when PITCH402_PAY_TO is unset: x402 cannot quote without a payee. */
+function unconfiguredPaymentResponse(base: string, playlist: Playlist, purchase: Purchase): Response {
   return json(
     {
-      x402Version: 1,
-      error: 'payment_required',
-      accepts: [
-        {
-          scheme: 'exact',
-          network: PAYMENT.network,
-          chain: PAYMENT.chain,
-          maxAmountRequired: price.amountAtomic,
-          asset: PAYMENT.assetAddress,
-          asset_symbol: PAYMENT.asset,
-          asset_decimals: PAYMENT.decimals,
-          asset_address_verified: PAYMENT.assetAddressVerified,
-          payTo: PAYMENT.payTo,
-          resource,
-          description: `Pitch402 spot ${spot} on "${playlist.name}" (cycle ${playlist.cycle}, term ${term})`,
-          mimeType: 'application/json',
-          maxTimeoutSeconds: 120,
-          facilitator: PAYMENT.facilitator,
-        },
-      ],
-      quote: {
-        playlist_id: playlist.id,
-        cycle: playlist.cycle,
-        spot,
-        term,
-        amount: price.amount,
-        amount_atomic: price.amountAtomic,
-        currency: price.currency,
-        decimals: price.decimals,
-      },
-      warnings: [
-        ...(PAYMENT.payTo ? [] : ['payTo is not configured — set PITCH402_PAY_TO before accepting real payments.']),
-        ...(PAYMENT.assetAddressVerified
-          ? []
-          : ['The USDC asset address is unverified — confirm it on a Base Sepolia explorer before paying.']),
-        'The real x402 SDK is not wired up yet. This body describes the intended payment only.',
-      ],
+      x402Version: 2,
+      error: 'payment_unavailable',
+      message: 'This server has no payout address configured, so it cannot accept x402 payments yet.',
+      hint: 'Set PITCH402_PAY_TO to an address on Base Sepolia and restart.',
+      ...quoteBody(base, playlist, purchase, '0x0000000000000000000000000000000000000000'),
       fake_payment: fakePayAllowed()
-        ? {
-            header: 'X-PITCH402-FAKE-PAY: 1',
-            description: 'Demo shortcut. Settles the buy with no wallet and no onchain transfer.',
-          }
+        ? { header: 'X-PITCH402-FAKE-PAY: 1', description: 'Demo shortcut. No wallet, no onchain transfer.' }
         : null,
-      note: 'Price is snapshotted at payment. A paid spot is never repriced.',
     },
     { status: 402 },
   )
@@ -228,11 +352,11 @@ function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist) {
       reference: receipt.paymentReference,
       network: PAYMENT.network,
       chain: PAYMENT.chain,
-      settled: receipt.paymentMethod === 'x402',
+      settled: receipt.settled,
       note:
         receipt.paymentMethod === 'fake'
           ? 'DEMO ONLY. No USDC moved and nothing was settled onchain.'
-          : 'Settled via x402.',
+          : 'Verified by the x402 facilitator. Settlement completes after this response; the transaction hash lands on the receipt and in the PAYMENT-RESPONSE header.',
     },
     added_at: receipt.addedAt,
     spotify: {
