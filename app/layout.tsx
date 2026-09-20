@@ -21,7 +21,7 @@ const mono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Pitch402 — buy the shelf',
+  title: 'Pitch402 — agentic playlist pitching',
   description: 'Agent-native paid playlist pitching on Base + x402 + Spotify.',
 }
 

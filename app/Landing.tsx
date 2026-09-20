@@ -134,7 +134,12 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
           <Image src="/pitch402-mark.png" alt="Pitch402" width={28} height={28} style={{ objectFit: 'contain', filter: 'invert(1)' }} />
           <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-0.03em' }}>PITCH402</span>
         </div>
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 28, font: `11px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+        {/*
+          The nav has to wrap. As a single non-wrapping row it measured wider
+          than a phone's content area and stretched the whole page with it,
+          pushing every section off the right edge.
+        */}
+        <nav style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', flex: '1 1 auto', minWidth: 0, gap: 'clamp(14px,3vw,28px)', font: `11px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
           <a className="lnk" href="#rails">The rail</a>
           <a className="lnk" href="#spots">The 100</a>
           <a className="lnk" href="#agents">Agents</a>
@@ -157,10 +162,18 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
             <span style={{ width: 26, height: 1, background: ACCENT }} />
             <span>{inv.spotsPerCycle} spots · one cycle · x402</span>
           </div>
-          <h1 style={{ margin: '26px 0 0', fontSize: 'clamp(56px,11vw,150px)', lineHeight: 0.82, letterSpacing: '-0.06em', fontWeight: 800, textTransform: 'uppercase' }}>
-            Buy the
+          {/*
+            Three words, set one per line. The type is smaller than the two-line
+            headline it replaces because "PLAYLIST" and "PITCHING" are longer
+            than "SHELF" — at the old size the longest line overflowed the
+            column.
+          */}
+          <h1 style={{ margin: '26px 0 0', fontSize: 'clamp(40px,8.4vw,118px)', lineHeight: 0.84, letterSpacing: '-0.055em', fontWeight: 800, textTransform: 'uppercase' }}>
+            Agentic
             <br />
-            shelf
+            Playlist
+            <br />
+            Pitching
           </h1>
           <p style={{ margin: '30px 0 0', fontSize: 'clamp(16px,1.5vw,19px)', lineHeight: 1.5, color: MUTED_2, maxWidth: '30em' }}>
             Agents already make the music. They still cannot buy the shelf without a form, an inbox, and a week or months of waiting.
