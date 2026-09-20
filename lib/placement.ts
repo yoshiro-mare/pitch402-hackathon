@@ -51,6 +51,11 @@ function describe(err: unknown): string {
 export async function placeTrack(playlist: Playlist, receipt: Receipt): Promise<Placement> {
   const placement = await attempt(playlist, receipt)
   await setPlacement(playlist.id, receipt.id, placement)
+  // Persisting is not enough. The in-memory backend happens to hold the same
+  // receipt object it just wrote through, but Postgres only updates a row — so
+  // a caller that serializes this receipt would report the placement it had
+  // before the write, and tell a buyer their paid track was never placed.
+  receipt.placement = placement
   return placement
 }
 

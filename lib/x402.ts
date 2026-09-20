@@ -80,13 +80,20 @@ function resourceFrom(context: { transportContext?: unknown }): string | null {
 /**
  * Both the full URL and the bare path are recorded, because the settlement
  * hook reports whichever the transport happened to carry.
+ *
+ * The query string is always stripped. A spot is bought at a URL carrying
+ * `?term=&network=`, but the resource it pays for is the path — so a resource
+ * is remembered and claimed under the same key regardless of how the buyer
+ * spelled the request.
  */
 function resourceKeys(resource: string): string[] {
-  const keys = [resource]
+  const keys: string[] = []
   try {
-    keys.push(new URL(resource).pathname)
+    const url = new URL(resource)
+    keys.push(`${url.origin}${url.pathname}`, url.pathname)
   } catch {
-    // resource is not a full URL; the raw value above is enough
+    // Not a full URL. Drop any query off the raw value by hand.
+    keys.push(resource.split('?')[0])
   }
   return [...new Set(keys)]
 }
@@ -103,15 +110,26 @@ export async function rememberPendingSettlement(resource: string, receiptId: str
     .upsert(keys.map((key) => ({ resource: key, receipt_id: receiptId })))
 }
 
-/** Claim the receipt a settlement belongs to, removing the mapping. */
+/**
+ * Claim the receipt a settlement belongs to, removing the mapping.
+ *
+ * Looked up by every key the resource could have been stored under, not by the
+ * raw string the hook handed us. The Next adapter reports `request.url`, which
+ * carries the query string the buyer posted with; the mapping was written from
+ * the bare resource. Matching on one exact string missed every time.
+ */
 async function takePendingSettlement(resource: string): Promise<string | null> {
+  const keys = resourceKeys(resource)
   if (!dbEnabled()) {
-    const receiptId = pending.get(resource) ?? null
-    if (receiptId) for (const key of resourceKeys(resource)) pending.delete(key)
+    const key = keys.find((k) => pending.has(k))
+    const receiptId = key ? (pending.get(key) ?? null) : null
+    if (receiptId) {
+      for (const [k, v] of pending) if (v === receiptId) pending.delete(k)
+    }
     return receiptId
   }
-  const { data } = await db().from('settlements').select('receipt_id').eq('resource', resource).maybeSingle()
-  const receiptId = (data as { receipt_id?: string } | null)?.receipt_id ?? null
+  const { data } = await db().from('settlements').select('receipt_id').in('resource', keys).limit(1)
+  const receiptId = (data as { receipt_id?: string }[] | null)?.[0]?.receipt_id ?? null
   if (receiptId) await db().from('settlements').delete().eq('receipt_id', receiptId)
   return receiptId
 }
