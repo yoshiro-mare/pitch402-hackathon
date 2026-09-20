@@ -7,16 +7,22 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "agent:setup": "node --env-file=.env.local agent/setup-wallet.ts",
+    "agent:buy": "node --env-file=.env.local agent/buy-spot.ts"
   },
   "dependencies": {
+    "@privy-io/node": "^0.34.0",
+    "@supabase/supabase-js": "^2.116.0",
     "@x402/core": "^2.26.0",
     "@x402/evm": "^2.26.0",
+    "@x402/fetch": "^2.26.0",
     "@x402/next": "^2.26.0",
     "@x402/paywall": "^2.26.0",
     "next": "^16.3.5",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "viem": "^2.56.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -52,6 +52,8 @@ purchase produces a durable record of the terms.
 | Payments | `lib/x402.ts` | x402 resource server, facilitator client, EVM exact scheme, settlement hook. Registers only networks that can actually settle. |
 | Networks | `lib/networks.ts` | Network resolution from query or body, and the `accepts` list served in quotes and 402 bodies. |
 | Validation | `lib/track.ts` | Normalises a Spotify track URI, URL or bare id. No network call. |
+| Spotify transport | `lib/spotify.ts` | Curator OAuth, token refresh, and the four Web API calls we make. Tokens live in memory and never leave the server. Speaks both Web API dialects — see below. |
+| Placement | `lib/placement.ts` | Turns a paid spot into a playlist position, records the outcome on the receipt, and removes a track when a payment fails to settle. |
 | API | `app/api/v1/**` | The seven endpoints below. |
 | Demo UI | `app/page.tsx` | Judge-facing page. Reads the same public API an agent uses. |
 
@@ -183,11 +185,37 @@ through the API, so the demo page and `/llms.txt` follow any edit automatically.
 | --- | --- | --- |
 | **HashKey settlement** | Blocked | An x402 facilitator that supports `eip155:133`, plus a testnet stablecoin address verified onchain. Until both exist, the network is advertised and demo-payable only. |
 | **Real x402 settlement** | Wired, unproven | A funded Base Sepolia wallet to run verify → 201 → settle end to end. The `onAfterSettle` hook that writes the transaction hash onto the receipt has not fired against a real payment. |
-| **Spotify OAuth write** | Designed, not built | Curator-only OAuth, token storage, and `POST /playlists/{id}/tracks` on a playlist the curator owns. Artists never authorise. |
+| **Spotify OAuth write** | Built, unproven against live Spotify | Curator-only OAuth, refresh-token storage, and `POST /playlists/{id}/tracks` at a computed position on a playlist the curator owns. Artists never authorise. Verified end to end against a stubbed Spotify API; needs real `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` and one curator account to prove against `api.spotify.com`. |
 | **Foundry receipt contract** | Not started | One contract for inventory and receipts. No token, no AMM. Unit and fuzz tests, `slither`, then Base Sepolia. |
-| **Persistent state** | Not started | Purchases live in memory and are lost on restart. Needs a database, with the contract as the source of truth for what was paid. |
+| **Persistent state** | Built, unproven against a live project | Supabase/Postgres behind the same store API, with an in-memory fallback so local dev needs no setup. `unique (playlist_id, cycle, spot)` makes double-selling impossible. Needs one real Supabase project to prove. The contract, when it exists, becomes the source of truth for what was paid. |
 | **Cycle rollover** | Partially specified | Next-cycle waitlist when 100 spots fill, and rolling 3m/1y reservations into the following cycle. |
 | **Curator dashboard** | Not started | Spot, amount, term, added-at, follower count, receipt. Estimates only from curator-uploaded Spotify for Artists data, always labelled as estimates. |
+
+### Why the unique constraint, not a check
+
+`isTaken()` then `sellSpot()` is check-then-act, and two agents can pass the check before either
+writes. In memory that window is small; across Vercel instances it is wide open. The `spots` table
+carries `unique (playlist_id, cycle, spot)`, so the insert is the check — one buyer wins, the loser
+gets Postgres error `23505`, and `lib/store.ts` turns that into `SpotTakenError`, which the buy
+route answers with 409 *before* x402 settles. The in-memory backend keeps the old check, which is
+sound for a single process.
+
+### Two Spotify API dialects
+
+Spotify's February 2026 changes renamed the playlist endpoints for Development Mode apps, and every
+Development Mode app was migrated on 9 March 2026. Extended Quota Mode apps kept the old spelling:
+
+| Development Mode (all new apps) | Extended Quota Mode |
+| --- | --- |
+| `POST /me/playlists` | `POST /users/{id}/playlists` |
+| `POST /playlists/{id}/items` | `POST /playlists/{id}/tracks` |
+| `DELETE /playlists/{id}/items`, body key `items` | `DELETE /playlists/{id}/tracks`, body key `tracks` |
+| playlist object field `items.total` | playlist object field `tracks.total` |
+
+An app cannot tell which mode it is in from a token, and making the developer declare it is one more
+thing to get wrong. `lib/spotify.ts` tries the modern spelling first, falls back on a 404, and caches
+whichever answered, so a single process makes at most one wasted request. Both paths are exercised
+in testing.
 
 ### Honest limit on network coverage
 

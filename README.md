@@ -82,6 +82,83 @@ holds a key and never signs a transaction.
 
 ---
 
+## Connect Spotify (curator, once)
+
+Optional for the demo, required for a track to actually land on a playlist.
+
+Create an app at <https://developer.spotify.com/dashboard>. In the form, tick **Web API**, and paste
+this as the redirect URI, exactly as written:
+
+```
+http://127.0.0.1:3000/api/v1/curator/spotify/callback
+```
+
+`localhost` is rejected — Spotify requires HTTPS or an explicit loopback IP, so it has to be
+`127.0.0.1`. Pin it so it cannot drift, whichever host you browse:
+
+```
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/v1/curator/spotify/callback
+```
+
+Two things Spotify requires of a new app, both easy to trip over:
+
+- **The account that owns the developer app needs Spotify Premium.** Every new app starts in
+  Development Mode, and Spotify stops Development Mode apps working if the owner's Premium lapses.
+- **Development Mode allows 5 authenticated users**, each added by email under Settings → Users
+  Management. Using one Premium account as both app owner and curator avoids this entirely.
+
+Then open, as the curator:
+
+```
+http://127.0.0.1:3000/api/v1/curator/spotify/connect?playlist=demo
+```
+
+That creates a fresh playlist on the curator's own account. To sell spots on a playlist they already
+run, add `&spotify_playlist_id=<id>` — Pitch402 refuses any playlist the connecting account does not
+own. Existing tracks stay where they are and paid spots are ordered after them.
+
+Without this, buying still works: the sale is recorded and the receipt reports
+`spotify.status: "skipped"` rather than claiming a placement that did not happen.
+
+---
+
+## Deploying (Vercel + Supabase)
+
+Local runs need no database: with `SUPABASE_URL` unset, inventory, receipts, Spotify tokens and
+OAuth state all live in memory, and `npm run dev` works with zero setup.
+
+That is exactly wrong for Vercel, where requests land on separate instances. Without a database a
+quote and a buy can disagree about the same spot, a Spotify callback lands on an instance that never
+issued the state it carries, and curator tokens vanish between requests.
+
+1. Create a Supabase project.
+2. Paste [supabase/schema.sql](supabase/schema.sql) into the SQL editor and run it. It is
+   re-runnable and seeds the demo cycle.
+3. Put the project URL and the **service role** key in Vercel's environment variables, along with
+   `PITCH402_PAY_TO`, the Spotify pair, and `PITCH402_BASE_URL` set to the deployed origin.
+4. Register `<your-domain>/api/v1/curator/spotify/callback` as a redirect URI on the Spotify app,
+   and set `SPOTIFY_REDIRECT_URI` to match.
+
+Two things worth knowing about that setup:
+
+**The database is what stops a spot being sold twice.** Checking "is this free?" and then writing is
+two steps, and two agents can pass the check between them — a real race for a product whose whole
+premise is paid exclusivity. `spots` carries `unique (playlist_id, cycle, spot)`, so the insert *is*
+the check: one buyer wins, the other gets a unique violation, and the API turns that into a 409
+before x402 settles anything.
+
+**The service role key bypasses Row Level Security.** The schema enables RLS on every table and
+grants no policy, so that key is the only way in — and curator Spotify tokens are in there. It is
+server-only, and no route ships it to a browser.
+
+**Demo pay is off in production.** `fakePayAllowed()` returns false when `NODE_ENV=production`. Set
+`PITCH402_ALLOW_FAKE_PAY=1` to keep the one-click demo on a deployment, and know that it then hands
+free spots to anyone who finds the URL.
+
+---
+
 ## How to demo (about two minutes)
 
 **1. Open the page.** <http://localhost:3000> shows the cycle, the next free spot and its price, and
@@ -182,17 +259,28 @@ The Base Sepolia USDC address was verified by `eth_call` against chain 84532 bef
 were confirmed the same way; its stablecoin address is deliberately left `null` in config rather than
 guessed, because a wrong token address loses funds. HashKey **mainnet** is not used.
 
-**Spotify — planned, not connected.** The intended flow is the curator authorising once with OAuth so
-the service can add tracks to a playlist they own. Artists never authorise anything. The service will
-never touch Spotify editorial playlists, and it reports no stream counts, because the Spotify Web API
-exposes no playlist-attributed plays or royalties.
+**Spotify — connected.** Paying for a spot adds the track to the curator's own Spotify playlist. The
+curator authorises once, with OAuth, over a playlist they own; artists and agents never touch Spotify
+at all. Spot numbers become real playlist positions: spots sell out of order, so each track is
+inserted after every lower-numbered spot already placed, which keeps the playlist in spot order
+however the sales arrive.
+
+A sale and a playlist write are separate things that can fail separately, and the receipt says which
+happened. `spotify.status` is `placed` only when Spotify confirms the write, `failed` when the payment
+went through and the write did not — the spot stays bought and `POST /api/v1/receipts/:id/place`
+retries it for free — and `skipped` when no curator playlist is connected yet. A verified payment that
+then fails to settle takes the track back off the playlist along with the spot.
+
+The service never touches Spotify editorial playlists, and it reports no stream counts, because the
+Spotify Web API exposes no playlist-attributed plays or royalties. Follower count is the one audience
+number it can honestly show, and it comes straight from the API.
 
 **Agent endpoints.**
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/v1/playlists` | List open cycles |
-| `GET /api/v1/playlists/:id` | Cycle detail, tiers, sold spots |
+| `GET /api/v1/playlists/:id` | Cycle detail, tiers, sold spots, Spotify connection |
 | `GET /api/v1/playlists/:id/quote?spot=N` | Price one spot |
 | `GET /api/v1/playlists/:id/quote?next=1` | Price the next free spot |
 | `POST /api/v1/playlists/:id/spots/:n` | Buy a spot — x402 gated |
@@ -202,6 +290,10 @@ exposes no playlist-attributed plays or royalties.
 
 **Stack.** Next.js 16 with TypeScript, the App Router, and no database. See
 [docs/TECH.md](docs/TECH.md) for the architecture and roadmap.
+
+**The buyer side.** `agent/` is an autonomous buyer built on a Privy agent wallet: it quotes a
+spot, answers the 402, and gets a receipt with no human in the loop. A Privy policy enforced in
+Privy's enclave limits what that wallet can ever sign. See [docs/PRIVY.md](docs/PRIVY.md).
 
 ---
 
@@ -216,10 +308,18 @@ This is a hackathon build. What is not yet true:
 - **The paid path is wired but unproven end to end.** The 402 challenge, the payment requirements, the
   per-spot pricing and the refusal to charge for a taken spot are all working and tested. A successful
   payment returning 201 has not been run against a funded wallet.
-- **State is in memory.** Restarting the server clears every purchase. There is no database and no
-  contract yet, so nothing survives a restart.
-- **Nothing reaches Spotify.** A purchase records the track against the spot. It does not add the track
-  to any playlist. The Spotify integration is designed but not built.
+- **State is in memory unless Supabase is configured.** Locally, restarting the server clears every
+  purchase. With `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set, sales, receipts, Spotify
+  tokens and OAuth state persist in Postgres. The Postgres path has been typechecked and built but
+  has not yet been run against a live Supabase project; the in-memory path is what every test here
+  exercised. There is still no contract, so Postgres — not an onchain record — is the source of
+  truth for what was paid.
+- **The Spotify write has not run against live Spotify.** The full flow — curator OAuth, token
+  refresh, insert at a computed position, retry after a failure, removal on a failed settlement — is
+  built and was verified end to end against a stubbed Spotify API, including buying spots out of
+  order and a curator editing the playlist by hand underneath us. It has not been run against
+  `api.spotify.com` with real credentials. Until `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are
+  set, a purchase records the sale and reports `spotify.status: "skipped"` rather than pretending.
 - **HashKey Chain Testnet is listed, not settled.** It is wired in for the hackathon's chain
   requirement: quotes and 402 responses advertise it, demo pay works on it, and receipts record it.
   Live facilitator settlement is verified on Base Sepolia only — no facilitator is confirmed for
@@ -227,5 +327,5 @@ This is a hackathon build. What is not yet true:
   `null` rather than a guess.
 - **No token, no AMM, no mainnet.** Testnets only.
 
-We would rather show you a working payment demand and say plainly what is stubbed than claim a
-placement pipeline that does not exist.
+We would rather show you a working payment demand and a placement that reports its own failures than
+claim a pipeline that always succeeds.

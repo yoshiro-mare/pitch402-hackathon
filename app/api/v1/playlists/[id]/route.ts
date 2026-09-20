@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const playlist = getPlaylist(id)
+  const playlist = await getPlaylist(id)
   if (!playlist) {
     return error(404, 'playlist_not_found', `no playlist with id "${id}"`)
   }
@@ -41,9 +41,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       networks: networkSummaries(),
     },
     spotify: {
+      connected: playlist.spotifyPlaylistId !== null,
       playlist_id: playlist.spotifyPlaylistId,
+      playlist_name: playlist.spotifyPlaylistName,
+      playlist_url: playlist.spotifyPlaylistUrl,
+      owner_id: playlist.spotifyOwnerId,
       followers: playlist.spotifyFollowers,
-      note: 'Curator-owned playlist only. Not a Spotify editorial playlist. No play or royalty data is available from the Spotify Web API.',
+      connected_at: playlist.spotifyConnectedAt,
+      items_before_pitch402: playlist.spotifyBaseOffset,
+      tracks_placed: playlist.sold.filter((s) => s.placement.status === 'placed').length,
+      connect_url:
+        playlist.spotifyPlaylistId === null
+          ? `${base}/api/v1/curator/spotify/connect?playlist=${playlist.id}`
+          : null,
+      note: playlist.spotifyPlaylistId
+        ? 'Paid spots are written to this curator-owned playlist. Not a Spotify editorial playlist. The Spotify Web API reports no plays, saves, or royalties for a playlist, so none are shown.'
+        : 'No curator playlist is connected yet, so buying a spot records the sale but writes nothing to Spotify.',
     },
     sold: playlist.sold.map((s) => ({
       spot: s.spot,
@@ -52,6 +65,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       term: s.term,
       network: s.network,
       added_at: s.addedAt,
+      track_uri: s.trackUri,
+      spotify_status: s.placement.status,
+      spotify_position: s.placement.position,
       receipt_url: `${base}/api/v1/receipts/${s.receiptId}`,
     })),
     links: {

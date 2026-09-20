@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const base = baseUrl(req)
-  const playlists = listPlaylists().map((playlist) => {
+  const playlists = (await listPlaylists()).map((playlist) => {
     const next = nextFreeSpot(playlist)
     return {
       id: playlist.id,

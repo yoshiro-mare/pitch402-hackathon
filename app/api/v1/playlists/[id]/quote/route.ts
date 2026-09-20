@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const playlist = getPlaylist(id)
+  const playlist = await getPlaylist(id)
   if (!playlist) {
     return error(404, 'playlist_not_found', `no playlist with id "${id}"`)
   }

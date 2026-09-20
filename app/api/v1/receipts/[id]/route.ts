@@ -2,19 +2,20 @@ import { type NextRequest } from 'next/server'
 import { networkFor } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
 import { getPlaylist, getReceipt } from '@/lib/store'
+import { serializePlacement } from '@/lib/placement'
 
 export const dynamic = 'force-dynamic'
 
 // Minimal read-back so the receipt_url handed out by a buy actually resolves.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const receipt = getReceipt(id)
+  const receipt = await getReceipt(id)
   if (!receipt) {
     return error(404, 'receipt_not_found', `no receipt with id "${id}"`)
   }
 
   const base = baseUrl(req)
-  const playlist = getPlaylist(receipt.playlistId)
+  const playlist = await getPlaylist(receipt.playlistId)
 
   return json({
     receipt_id: receipt.id,
@@ -44,6 +45,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             : 'Verified by the x402 facilitator; settlement not confirmed yet.',
     },
     added_at: receipt.addedAt,
+    spotify: playlist
+      ? serializePlacement(receipt.placement, playlist, base, receipt.id)
+      : { status: receipt.placement.status, note: 'Playlist is no longer in the store.' },
     playlist_url: `${base}/api/v1/playlists/${receipt.playlistId}`,
   })
 }

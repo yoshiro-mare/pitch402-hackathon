@@ -57,15 +57,35 @@ network. Settlement is verified on Base Sepolia only.
 - GET ${base}/api/v1/playlists/{id}
 - GET ${base}/api/v1/playlists/{id}/quote?spot=N
 - GET ${base}/api/v1/playlists/{id}/quote?next=1
-- POST ${base}/api/v1/playlists/{id}/spots/{n}   (x402 gated, not implemented yet)
-- GET ${base}/api/v1/receipts/{id}               (not implemented yet)
+- POST ${base}/api/v1/playlists/{id}/spots/{n}   (x402 gated)
+- GET ${base}/api/v1/receipts/{id}
+- POST ${base}/api/v1/receipts/{id}/place        (retry a failed Spotify write, free)
 - GET ${base}/.well-known/agent.json
+
+Curator only, once per cycle:
+
+- GET ${base}/api/v1/curator/spotify/connect?playlist={id}
 
 ## Start here
 
 GET ${base}/api/v1/playlists/demo/quote?next=1
 
 The response carries next_action.url — POST to it to buy the quoted spot.
+
+## What buying does
+
+Paying for spot N adds your track to the curator's own Spotify playlist and
+returns a receipt. The receipt's "spotify" block reports what actually
+happened:
+
+- status "placed"  — the track is on the playlist, at "position" (zero-based,
+                     and not the same number as the spot)
+- status "failed"  — payment succeeded, the Spotify write did not. The spot is
+                     yours and held. POST the "retry_url" to try again.
+- status "skipped" — no curator playlist is connected to this cycle yet, so
+                     there was nothing to write to.
+
+You never need a Spotify account. Only the curator authorizes Spotify, once.
 
 ## Payment
 

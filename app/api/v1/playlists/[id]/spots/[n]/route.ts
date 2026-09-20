@@ -22,6 +22,7 @@ import {
   type Receipt,
 } from '@/lib/store'
 import { normalizeTrackUri } from '@/lib/track'
+import { placeTrack, serializePlacement, unplaceTrack } from '@/lib/placement'
 import { acceptsList, resolveNetwork } from '@/lib/networks'
 import {
   assetPrice,
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id, n } = await params
   const base = baseUrl(req)
 
-  const playlist = getPlaylist(id)
+  const playlist = await getPlaylist(id)
   if (!playlist) {
     return error(404, 'playlist_not_found', `no playlist with id "${id}"`)
   }
@@ -194,7 +195,7 @@ async function paidPost(
     const response = await settle(base, playlist, purchase, 'x402')
     const payload = (await response.clone().json()) as { receipt_id?: string }
     receiptId = payload.receipt_id ?? null
-    if (receiptId) rememberPendingSettlement(resource, receiptId)
+    if (receiptId) await rememberPendingSettlement(resource, receiptId)
     return NextResponse.json(payload, { status: response.status })
   }
 
@@ -219,7 +220,12 @@ async function paidPost(
         // Payment verified but settlement failed: give the spot back rather
         // than holding it against money that never moved.
         settlementFailedResponseBody: (_context, result) => {
-          if (receiptId) releaseSpot(playlist.id, receiptId)
+          // Money never moved, so the track must not stay on the playlist
+          // either. Best effort, and the sale is released regardless.
+          if (receiptId) {
+            void unplaceTrack(playlist, purchase.trackUri)
+            void releaseSpot(playlist.id, receiptId)
+          }
           return {
             contentType: 'application/json',
             body: {
@@ -254,7 +260,7 @@ async function settle(
 ): Promise<Response> {
   let receipt: Receipt
   try {
-    receipt = sellSpot(playlist, {
+    receipt = await sellSpot(playlist, {
       spot: purchase.spot,
       amountAtomic: purchase.price.amountAtomic,
       amount: purchase.price.amount,
@@ -271,6 +277,13 @@ async function settle(
     }
     throw err
   }
+
+  // The payment is good and the spot is taken. Now do the thing the buyer
+  // actually paid for: put the track on the curator's Spotify playlist. This
+  // is awaited so the response reports what really happened rather than a
+  // promise to try later, and it never throws — a failed write leaves the spot
+  // paid for and retryable.
+  await placeTrack(playlist, receipt)
 
   return json(serializeReceipt(base, receipt, playlist), {
     status: 201,
@@ -403,10 +416,7 @@ function serializeReceipt(base: string, receipt: Receipt, playlist: Playlist) {
           : 'Verified by the x402 facilitator. Settlement completes after this response; the transaction hash lands on the receipt and in the PAYMENT-RESPONSE header.',
     },
     added_at: receipt.addedAt,
-    spotify: {
-      status: 'not_added',
-      note: 'Spotify write is not implemented yet. The track is recorded against the spot only.',
-    },
+    spotify: serializePlacement(receipt.placement, playlist, base, receipt.id),
     next_free_spot: nextFreeSpot(playlist),
     playlist_url: `${base}/api/v1/playlists/${playlist.id}`,
   }

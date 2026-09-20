@@ -2,11 +2,16 @@ import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server'
 import { ExactEvmScheme } from '@x402/evm/exact/server'
 import { NETWORKS, PAY_TO, type NetworkConfig, type NetworkId } from '@/config/pitch402.config'
 import { markReceiptSettled } from '@/lib/store'
+import { db, dbEnabled } from '@/lib/db'
 
 type X402Globals = {
   server?: x402ResourceServer
   ready?: Promise<void>
-  /** resource URL -> receipt id, so a settlement can find what it paid for */
+  /**
+   * resource URL -> receipt id, so a settlement can find what it paid for.
+   * Only used when Supabase is not configured; with it, the mapping lives in
+   * the settlements table so any instance can resolve a settlement.
+   */
   pending?: Map<string, string>
 }
 
@@ -47,16 +52,15 @@ function buildServer(): x402ResourceServer {
     server.register(network.chain, new ExactEvmScheme())
   }
 
-  // Settlement finishes after the response is handed back, so the transaction
-  // hash arrives here rather than in the route handler.
+  // The hook that learns the transaction hash only has the resource URL to go
+  // on, so the sale it belongs to is looked up by that.
   server.onAfterSettle(async (context) => {
     const resource = resourceFrom(context)
     if (!resource) return
-    const receiptId = pending.get(resource)
+    const receiptId = await takePendingSettlement(resource)
     if (!receiptId) return
-    pending.delete(resource)
     const result = context.result as { success?: boolean; transaction?: string } | undefined
-    markReceiptSettled(receiptId, result?.transaction ?? null)
+    await markReceiptSettled(receiptId, result?.transaction ?? null)
   })
 
   return server
@@ -73,14 +77,43 @@ function resourceFrom(context: { transportContext?: unknown }): string | null {
   return typeof path === 'string' && path ? path : null
 }
 
-/** Remember which receipt a settlement belongs to, by resource URL and path. */
-export function rememberPendingSettlement(resource: string, receiptId: string): void {
-  pending.set(resource, receiptId)
+/**
+ * Both the full URL and the bare path are recorded, because the settlement
+ * hook reports whichever the transport happened to carry.
+ */
+function resourceKeys(resource: string): string[] {
+  const keys = [resource]
   try {
-    pending.set(new URL(resource).pathname, receiptId)
+    keys.push(new URL(resource).pathname)
   } catch {
     // resource is not a full URL; the raw value above is enough
   }
+  return [...new Set(keys)]
+}
+
+/** Remember which receipt a settlement belongs to, by resource URL and path. */
+export async function rememberPendingSettlement(resource: string, receiptId: string): Promise<void> {
+  const keys = resourceKeys(resource)
+  if (!dbEnabled()) {
+    for (const key of keys) pending.set(key, receiptId)
+    return
+  }
+  await db()
+    .from('settlements')
+    .upsert(keys.map((key) => ({ resource: key, receipt_id: receiptId })))
+}
+
+/** Claim the receipt a settlement belongs to, removing the mapping. */
+async function takePendingSettlement(resource: string): Promise<string | null> {
+  if (!dbEnabled()) {
+    const receiptId = pending.get(resource) ?? null
+    if (receiptId) for (const key of resourceKeys(resource)) pending.delete(key)
+    return receiptId
+  }
+  const { data } = await db().from('settlements').select('receipt_id').eq('resource', resource).maybeSingle()
+  const receiptId = (data as { receipt_id?: string } | null)?.receipt_id ?? null
+  if (receiptId) await db().from('settlements').delete().eq('receipt_id', receiptId)
+  return receiptId
 }
 
 /**

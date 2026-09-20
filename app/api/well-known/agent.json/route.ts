@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { DEFAULT_NETWORK, SPOTS_PER_CYCLE, USDC_DECIMALS } from '@/config/pitch402.config'
 import { baseUrl, json } from '@/lib/http'
-import { publicTerms } from '@/lib/store'
+import { publicTerms, storageBackend } from '@/lib/store'
 import { networkSummaries } from '@/lib/networks'
 
 export const dynamic = 'force-dynamic'
@@ -50,14 +50,25 @@ export async function GET(req: NextRequest) {
       {
         method: 'POST',
         path: '/api/v1/playlists/{id}/spots/{n}',
-        description: 'Buy a spot. x402 gated. Not implemented yet.',
-        status: 'not_implemented',
+        description:
+          'Buy a spot. x402 gated. On payment the track is added to the curator-owned Spotify playlist and the response reports where it landed.',
       },
       {
         method: 'GET',
         path: '/api/v1/receipts/{id}',
-        description: 'Receipt for a paid spot. Not implemented yet.',
-        status: 'not_implemented',
+        description: 'Receipt for a paid spot, including its Spotify placement.',
+      },
+      {
+        method: 'POST',
+        path: '/api/v1/receipts/{id}/place',
+        description:
+          'Retry the Spotify write for a spot that was paid for but not placed. Free — the spot is already bought.',
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/curator/spotify/connect?playlist={id}',
+        description:
+          'Curator only, once per cycle. Authorizes Pitch402 to write to their own Spotify playlist. Artists and agents never authorize Spotify.',
       },
     ],
     getting_started: {
@@ -68,8 +79,13 @@ export async function GET(req: NextRequest) {
     honesty: [
       'Settlement is verified on Base Sepolia only. HashKey Chain Testnet is listed for network coverage; no facilitator is confirmed for it.',
       'Curator-owned playlists only. Never Spotify editorial playlists.',
+      'A spot is only placed on Spotify once a curator has connected a playlist. Until then a sale is recorded and the receipt says the placement was skipped.',
+      'A placement is reported only when Spotify confirms the write. A failed write is reported as failed, never as placed.',
       'No stream counts or royalty figures. The Spotify Web API does not expose playlist-attributed plays.',
       'No guaranteed algorithmic streams.',
+      storageBackend() === 'memory'
+        ? 'This instance stores sales in memory. They are lost when it restarts, and it must not be run as more than one instance.'
+        : 'Sales are stored in Postgres, and a unique constraint on (playlist, cycle, spot) makes selling one spot twice impossible.',
     ],
   })
 }
