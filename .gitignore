@@ -9,3 +9,6 @@ contracts/lib
 *.key
 *.tsbuildinfo
 next-env.d.ts
+
+# publisher packaging artifact; duplicates the skill files beside it
+.claude/skills/**/Archive.zip
