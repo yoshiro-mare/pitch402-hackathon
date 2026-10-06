@@ -1,9 +1,10 @@
 import { type NextRequest } from 'next/server'
-import { DEFAULT_TERM, isValidTerm, networkFor } from '@/config/pitch402.config'
+import { DEFAULT_TERM, isTierId, isValidTerm, networkFor, tierById } from '@/config/pitch402.config'
 import { baseUrl, error, json } from '@/lib/http'
-import { getPlaylist, isTaken, nextFreeSpot } from '@/lib/store'
+import { firstFreeSpotInTier, getPlaylist, isTaken, nextFreeSpot, tierRemaining } from '@/lib/store'
 import { acceptsList, resolveNetwork } from '@/lib/networks'
 import { priceFor, serializePrice } from '@/lib/pricing'
+import { tierFor } from '@/config/pitch402.config'
 import { payTo } from '@/lib/x402'
 import { normalizeTrackUri, trackIdFrom } from '@/lib/track'
 import { SpotifyError, getTrack, serializeTrack } from '@/lib/spotify'
@@ -35,12 +36,41 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const wantsNext = search.get('next') === '1'
   const spotParam = search.get('spot')
-  if (!wantsNext && spotParam === null) {
-    return error(400, 'missing_spot', 'pass ?spot=N for a specific spot or ?next=1 for the next free spot')
+  const tierParam = search.get('tier')
+  if (!wantsNext && spotParam === null && tierParam === null) {
+    return error(
+      400,
+      'missing_spot',
+      'pass ?spot=N for a specific spot, ?tier=<id> for the first free spot in a price band, or ?next=1 for the next free spot',
+    )
   }
 
   let spot: number
-  if (spotParam !== null) {
+  if (tierParam !== null) {
+    // A price band rather than a number: the buyer picks what to pay, and the
+    // cheapest unsold position at that price is what gets quoted.
+    if (!isTierId(tierParam)) {
+      return error(400, 'invalid_tier', 'tier must be one of top, front, mid, shelf', { got: tierParam })
+    }
+    const tier = tierById(tierParam)
+    const free = firstFreeSpotInTier(playlist, tier)
+    if (free === null) {
+      return json(
+        {
+          playlist_id: playlist.id,
+          cycle: playlist.cycle,
+          available: false,
+          reason: 'tier_full',
+          tier: { id: tier.id, label: tier.label, from: tier.from, to: tier.to, price: tier.price },
+          next_free_spot: nextFreeSpot(playlist),
+          next_action: null,
+          message: `Every spot in the ${tier.label} tier (${tier.from}-${tier.to}) is sold. Pick another tier.`,
+        },
+        { status: 409 },
+      )
+    }
+    spot = free
+  } else if (spotParam !== null) {
     if (!/^\d+$/.test(spotParam)) {
       return error(400, 'invalid_spot', 'spot must be a whole number', { got: spotParam })
     }
@@ -68,6 +98,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const taken = isTaken(playlist, spot)
   const price = priceFor(spot, termParam)
+  const tierOfSpot = tierFor(spot)
   const buyUrl = `${base}/api/v1/playlists/${playlist.id}/spots/${spot}`
 
   if (taken) {
@@ -127,6 +158,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     cycle: playlist.cycle,
     spot,
     available: true,
+    tier: {
+      id: tierOfSpot.id,
+      label: tierOfSpot.label,
+      from: tierOfSpot.from,
+      to: tierOfSpot.to,
+      price: tierOfSpot.price,
+      spots_remaining: tierRemaining(playlist, tierOfSpot),
+    },
     ...(trackParam !== null ? { track, track_error: trackError } : {}),
     term: termParam,
     price: {

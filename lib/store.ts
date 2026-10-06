@@ -6,6 +6,7 @@ import {
   USDC_DECIMALS,
   type NetworkId,
   type Term,
+  type Tier,
 } from '@/config/pitch402.config'
 import { db, dbEnabled, isUniqueViolation } from '@/lib/db'
 
@@ -178,6 +179,29 @@ export function spotsRemaining(playlist: Playlist): number {
 }
 
 /**
+ * Lowest free spot inside one price band, or null when the band is sold out.
+ * This is what a tier selection resolves to: the buyer picks the price, and the
+ * cheapest unsold position at that price is what they are quoted.
+ */
+export function firstFreeSpotInTier(playlist: Playlist, tier: Tier): number | null {
+  const last = Math.min(tier.to, playlist.spotsPerCycle)
+  for (let spot = tier.from; spot <= last; spot += 1) {
+    if (!isTaken(playlist, spot)) return spot
+  }
+  return null
+}
+
+/** How many spots in this band are still free. */
+export function tierRemaining(playlist: Playlist, tier: Tier): number {
+  const last = Math.min(tier.to, playlist.spotsPerCycle)
+  let free = 0
+  for (let spot = tier.from; spot <= last; spot += 1) {
+    if (!isTaken(playlist, spot)) free += 1
+  }
+  return free
+}
+
+/**
  * Where a spot's track belongs in the Spotify playlist right now.
  *
  * Not `spot - 1`: spots sell out of order, so spot 40 may be the first thing
@@ -194,7 +218,14 @@ export function placementIndex(playlist: Playlist, spot: number): number {
 /** Tier ladder and term multipliers as served to agents. */
 export function publicTerms() {
   return {
-    tiers: TIERS.map((t) => ({ from: t.from, to: t.to, price: t.price, currency: 'USDC' })),
+    tiers: TIERS.map((t) => ({
+      id: t.id,
+      label: t.label,
+      from: t.from,
+      to: t.to,
+      price: t.price,
+      currency: 'USDC',
+    })),
     termMultipliers: TERM_MULTIPLIERS,
   }
 }

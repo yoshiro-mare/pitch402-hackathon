@@ -19,7 +19,7 @@ import { ACCENT, BG, DIM, GUTTER, INK, LINE, LINE_2, MAX_W, MONO, MUTED, MUTED_2
 const API = '/api/v1/playlists/demo'
 const SOURCE = 'https://github.com/yoshiro-mare/pitch402-hackathon'
 
-type Tier = { from: number; to: number; price: string }
+type Tier = { id: string; label: string; from: number; to: number; price: string }
 
 type Inventory = {
   spotsPerCycle: number
@@ -38,13 +38,20 @@ const UNKNOWN: Inventory = {
   taken: new Set(),
   nextFree: 1,
   tiers: [
-    { from: 1, to: 1, price: '10' },
-    { from: 2, to: 3, price: '5' },
-    { from: 4, to: 10, price: '3' },
-    { from: 11, to: 100, price: '1' },
+    { id: 'top', label: 'Top', from: 1, to: 1, price: '10' },
+    { id: 'front', label: 'Front', from: 2, to: 3, price: '5' },
+    { id: 'mid', label: 'Mid', from: 4, to: 10, price: '3' },
+    { id: 'shelf', label: 'Shelf', from: 11, to: 100, price: '1' },
   ],
   playlistUrl: null,
   known: false,
+}
+
+/** Spots still free inside one band. */
+function freeIn(tier: { from: number; to: number }, taken: Set<number>, perCycle: number): number {
+  let free = 0
+  for (let n = tier.from; n <= Math.min(tier.to, perCycle); n += 1) if (!taken.has(n)) free += 1
+  return free
 }
 
 export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) => void }) {
@@ -98,23 +105,12 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
     [onPickSpot],
   )
 
-  const cells = useMemo(
-    () =>
-      Array.from({ length: inv.spotsPerCycle }, (_, i) => {
-        const n = i + 1
-        const isTaken = inv.taken.has(n)
-        const { bg, fg } = tierStyle(priceOf(n))
-        return {
-          n,
-          isTaken,
-          bg: isTaken ? 'transparent' : bg,
-          fg: isTaken ? DIM : fg,
-          border: isTaken ? '1px dashed #4A473F' : '1px solid transparent',
-          ring: n === spot ? `2px solid ${INK}` : '0px solid transparent',
-        }
-      }),
-    [inv.spotsPerCycle, inv.taken, priceOf, spot],
-  )
+  // Cheapest band that still has something in it — what the hero offers.
+  const cheapest = useMemo(() => {
+    const open = inv.tiers.filter((t) => !inv.known || freeIn(t, inv.taken, inv.spotsPerCycle) > 0)
+    const prices = (open.length ? open : inv.tiers).map((t) => Number(t.price))
+    return prices.length ? Math.min(...prices) : 1
+  }, [inv.tiers, inv.taken, inv.known, inv.spotsPerCycle])
 
   return (
     <div style={{ maxWidth: MAX_W, margin: '0 auto', padding: GUTTER }}>
@@ -141,7 +137,7 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
         */}
         <nav style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', flex: '1 1 auto', minWidth: 0, gap: 'clamp(14px,3vw,28px)', font: `11px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
           <a className="lnk" href="#rails">The rail</a>
-          <a className="lnk" href="#spots">The 100</a>
+          <a className="lnk" href="#tiers">Tiers</a>
           <a className="lnk" href="#agents">Agents</a>
           <a className="btn-light" href="#console">Open the endpoint</a>
         </nav>
@@ -176,11 +172,11 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
             Pitching
           </h1>
           <p style={{ margin: '30px 0 0', fontSize: 'clamp(16px,1.5vw,19px)', lineHeight: 1.5, color: MUTED_2, maxWidth: '30em' }}>
-            Agents already make the music. They still cannot buy the shelf without a form, an inbox, and a week or months of waiting.
+            Pitch402 turns “please put my song on your playlist” into something an agent can buy in seconds.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 36 }}>
             <a className="btn-accent" href="#console">
-              Take spot {spotLabel} — {unit} USDC
+              Buy a slot — from {cheapest} USDC
             </a>
             <a className="btn-ghost" href="#rails">
               How the rail works
@@ -252,7 +248,8 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
       {/* ── the rail ───────────────────────────────────────────────────── */}
       <section id="rails" style={{ padding: 'clamp(56px,8vw,110px) 0' }}>
         <p style={{ margin: 0, fontSize: 'clamp(24px,3.4vw,46px)', lineHeight: 1.1, letterSpacing: '-0.04em', fontWeight: 700, maxWidth: '24em' }}>
-          That economy will not email PDFs to A&amp;R. It will hit an endpoint.
+          The new creator economy will not email thousands of pitches to A&amp;R. It will hit an endpoint
+          autonomous agents can interact with.
         </p>
         <p style={{ margin: '22px 0 0', fontSize: 16, lineHeight: 1.6, color: MUTED, maxWidth: '38em' }}>
           Pitch402 is that endpoint for the one resource that still matters in music: being on the list.
@@ -299,60 +296,49 @@ export default function Landing({ onPickSpot }: { onPickSpot?: (spot: number) =>
         </p>
       </section>
 
-      {/* ── the 100 ────────────────────────────────────────────────────── */}
-      <section id="spots" style={{ paddingBottom: 'clamp(56px,8vw,110px)' }}>
+      {/* ── tiers ──────────────────────────────────────────────────────── */}
+      <section id="tiers" style={{ paddingBottom: 'clamp(56px,8vw,110px)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap', marginBottom: 30 }}>
-          <h2 style={{ margin: 0, fontSize: 'clamp(28px,4vw,54px)', lineHeight: 1, letterSpacing: '-0.045em', fontWeight: 800, textTransform: 'uppercase' }}>The {inv.spotsPerCycle}</h2>
+          <h2 style={{ margin: 0, fontSize: 'clamp(28px,4vw,54px)', lineHeight: 1, letterSpacing: '-0.045em', fontWeight: 800, textTransform: 'uppercase' }}>Four prices</h2>
           <span style={{ font: `11px ${MONO}`, letterSpacing: '0.14em', textTransform: 'uppercase', color: MUTED }}>
             {inv.known ? `${freeCount} open · ${takenCount} taken` : 'loading inventory'}
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(42px,1fr))', gap: 5 }}>
-          {cells.map((c) => (
-            <button
-              key={c.n}
-              type="button"
-              className="cell"
-              disabled={c.isTaken}
-              onClick={() => pick(c.n)}
-              title={c.isTaken ? `Spot ${c.n} — taken` : `Spot ${c.n} — ${priceOf(c.n)} USDC`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                aspectRatio: '1',
-                borderRadius: 2,
-                font: `11px ${MONO}`,
-                padding: 0,
-                border: c.border,
-                background: c.bg,
-                color: c.fg,
-                outline: c.ring,
-                outlineOffset: 2,
-              }}
-            >
-              {c.n}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, alignItems: 'center', marginTop: 24, font: `10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+        {/*
+          Bands, not a hundred buttons. Picking one scrolls to the console and
+          preselects it there; the slot number is the server's answer to that
+          choice, so nothing here has to pretend to know which spot is free.
+        */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
           {inv.tiers.map((t) => {
-            const { bg } = tierStyle(t.price)
+            const { bg, fg } = tierStyle(t.price)
+            const left = freeIn(t, inv.taken, inv.spotsPerCycle)
+            const soldOut = inv.known && left === 0
             return (
-              <span key={`${t.from}-${t.to}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 2, background: bg }} />
-                {t.from === t.to ? `Spot ${t.from}` : `${t.from}–${t.to}`} · {t.price}
-              </span>
+              <a
+                key={`${t.from}-${t.to}`}
+                href="#console"
+                onClick={() => pick(t.from)}
+                className="band"
+                style={{ opacity: soldOut ? 0.45 : 1 }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ width: 14, height: 14, borderRadius: 2, background: bg, border: `1px solid ${bg === 'transparent' ? LINE_2 : bg}`, color: fg }} />
+                  <b style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.03em' }}>{t.label}</b>
+                </span>
+                <span style={{ font: `26px ${MONO}`, letterSpacing: '-0.04em' }}>{t.price} USDC</span>
+                <small style={{ font: `10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: MUTED }}>
+                  {t.from === t.to ? `Spot ${t.from}` : `Spots ${t.from}–${t.to}`}
+                  {inv.known && ` · ${soldOut ? 'sold out' : `${left} open`}`}
+                </small>
+              </a>
             )
           })}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 12, height: 12, borderRadius: 2, border: '1px dashed #4A473F' }} />
-            taken
-          </span>
-          <span style={{ color: INK }}>
-            Selected: spot {spotLabel} · {unit} USDC
-          </span>
         </div>
+        <p style={{ margin: '24px 0 0', fontSize: 15, lineHeight: 1.6, color: MUTED, maxWidth: '34em' }}>
+          You pick the price. We give you the next open slot in that tier. Numbered inventory still
+          exists — it is what the API quotes and what the receipt records.
+        </p>
       </section>
 
       {/* ── agents ─────────────────────────────────────────────────────── */}
@@ -507,9 +493,10 @@ a { color: ${INK}; text-decoration: none; }
 .poster { transition: border-color .15s ease; }
 .poster:hover { border-color: ${INK}; }
 
-.cell { cursor: pointer; transition: transform .12s ease; }
-.cell:hover:not(:disabled) { transform: translateY(-2px); }
-.cell:disabled { cursor: not-allowed; }
+.band { display: flex; flex-direction: column; gap: 10px; padding: 20px;
+  border: 1px solid ${LINE_2}; border-radius: 3px; background: ${PANEL};
+  transition: border-color .15s ease, transform .12s ease; }
+.band:hover { border-color: ${INK}; transform: translateY(-2px); }
 
 html { scroll-behavior: smooth; }
 `

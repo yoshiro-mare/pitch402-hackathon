@@ -6,7 +6,7 @@ import { connect, EXPLORER, explain, injected, payingFetch, settlementTx, usdcBa
 import HandToAgent from './HandToAgent'
 import { ACCENT, BAD, BG, DIM, INK, LINE, LINE_2, LINE_3, MAX_W, MONO, MUTED, MUTED_2, OK, PANEL, WARN } from './theme'
 
-type Tier = { from: number; to: number; price: string }
+type Tier = { id: string; label: string; from: number; to: number; price: string }
 
 type Playlist = {
   id: string
@@ -35,6 +35,7 @@ type Quote = {
   spot: number
   term: string
   price: { amount: string; amount_atomic: string }
+  tier: { id: string; label: string; from: number; to: number; price: string; spots_remaining: number }
   next_action: { method: string; url: string }
 }
 
@@ -101,7 +102,11 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [track, setTrack] = useState('https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT')
-  const [spot, setSpot] = useState('')
+  // A price band, not a number. The quote above turns it into the slot.
+  const [tier, setTier] = useState<string | null>(null)
+  const [tierFull, setTierFull] = useState(false)
+  const [quoting, setQuoting] = useState(false)
+  const [requoted, setRequoted] = useState<string | null>(null)
   const [term, setTerm] = useState('cycle')
   const [network, setNetwork] = useState('base-sepolia')
   const [challenge, setChallenge] = useState<Challenge | null>(null)
@@ -119,23 +124,66 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
-    const [p, q] = await Promise.all([
-      fetch(API).then((r) => r.json()),
-      fetch(`${API}/quote?next=1`).then((r) => (r.ok ? r.json() : null)),
-    ])
+    const p = await fetch(API).then((r) => r.json())
     setPlaylist(p)
-    setQuote(q)
-    setSpot((current) => current || String(q?.spot ?? p.next_free_spot ?? 1))
+    return p as Playlist
   }, [])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  // A spot chosen in the grid upstairs wins over the next-free default.
+  /**
+   * Ask the server which slot a band resolves to. The number shown on the card
+   * is always the server's answer, never computed here, so what the buyer reads
+   * is what a POST would charge for.
+   */
+  const quoteTier = useCallback(
+    async (id: string, forTerm: string): Promise<Quote | null> => {
+      setQuoting(true)
+      try {
+        const res = await fetch(`${API}/quote?tier=${id}&term=${forTerm}`)
+        const data = await res.json()
+        if (!res.ok) {
+          setQuote(null)
+          setTierFull(data.reason === 'tier_full')
+          return null
+        }
+        setQuote(data)
+        setTierFull(false)
+        return data as Quote
+      } catch {
+        setQuote(null)
+        return null
+      } finally {
+        setQuoting(false)
+      }
+    },
+    [],
+  )
+
+  // Default to the cheapest band that still has a free slot — never spot 1.
   useEffect(() => {
-    if (selectedSpot) setSpot(String(selectedSpot))
-  }, [selectedSpot])
+    if (tier !== null || !playlist) return
+    const cheapestOpen = [...playlist.pricing.tiers]
+      .sort((a, b) => Number(a.price) - Number(b.price))
+      .find((t) => remainingIn(t, playlist) > 0)
+    if (cheapestOpen) setTier(cheapestOpen.id)
+  }, [playlist, tier])
+
+  // Re-quote whenever the band or the term changes.
+  useEffect(() => {
+    if (!tier) return
+    setRequoted(null)
+    void quoteTier(tier, term)
+  }, [tier, term, quoteTier])
+
+  // A spot picked in the landing grid upstairs selects the band it belongs to.
+  useEffect(() => {
+    if (!selectedSpot || !playlist) return
+    const band = playlist.pricing.tiers.find((t) => selectedSpot >= t.from && selectedSpot <= t.to)
+    if (band) setTier(band.id)
+  }, [selectedSpot, playlist])
 
   /**
    * Resolve whatever is in the track box against the Spotify catalog so the
@@ -178,18 +226,12 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
     }
   }, [track])
 
-  const priceOf = (n: number): string => {
-    const tier = playlist?.pricing.tiers.find((t) => n >= t.from && n <= t.to)
-    return tier ? tier.price : '?'
-  }
-
-  const takenSet = new Set(playlist?.sold.map((s) => s.spot) ?? [])
-  const multiplier = playlist?.pricing.term_multipliers[term] ?? 1
-  const selected = Number(spot)
-  const selectedTotal =
-    playlist && selected >= 1 && selected <= playlist.spots_per_cycle
-      ? `${Number(priceOf(selected)) * multiplier} USDC`
-      : '—'
+  // The slot and the amount both come from the quote, so the button can never
+  // promise a price the server would not charge.
+  const selected = quote?.spot ?? 0
+  const amount = quote?.price.amount ?? null
+  const selectedTotal = amount ? `${amount} USDC` : '—'
+  const canBuy = quote !== null && !tierFull && !quoting
 
   async function connectWallet() {
     setError(null)
@@ -210,15 +252,33 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
   async function buyWithWallet(e: React.FormEvent) {
     e.preventDefault()
     if (!wallet) return connectWallet()
+    if (!tier || !quote) return
     setPaying(true)
     setError(null)
     setChallenge(null)
     setReceipt(null)
     setTx(null)
+    setRequoted(null)
     try {
-      const price = String(Number(priceOf(selected)) * multiplier)
+      /*
+        The card may be stale: someone else can take the quoted slot between
+        load and click. Re-quote the same band first and charge only if the
+        answer still names the slot on screen. If it moved, the card updates and
+        nothing is paid — the next click buys what the buyer can now see.
+      */
+      const fresh = await quoteTier(tier, term)
+      if (!fresh) {
+        setRequoted('That tier just sold out. Pick another one.')
+        return
+      }
+      if (fresh.spot !== quote.spot || fresh.price.amount !== quote.price.amount) {
+        setRequoted(`Slot ${quote.spot} went while you were deciding. This is slot ${fresh.spot} at ${fresh.price.amount} USDC — nothing was charged.`)
+        return
+      }
+
+      const price = fresh.price.amount
       const res = await payingFetch(wallet, price)(
-        `${API}/spots/${selected}?term=${term}&network=base-sepolia`,
+        `${API}/spots/${fresh.spot}?term=${term}&network=base-sepolia`,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -227,9 +287,9 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
       )
       const data = await res.json()
       if (!res.ok) {
-        const next = data.next_free_spot
-        setError(`${data.error?.message ?? data.message ?? 'Buy failed'}${next ? ` — next free spot is ${next}` : ''}`)
-        if (next) setSpot(String(next))
+        // Lost the race inside the request: show the band's new slot, unpaid.
+        setError(data.error?.message ?? data.message ?? 'Buy failed')
+        if (tier) await quoteTier(tier, term)
       } else {
         setReceipt(data)
         // Settlement runs after the response, so the hash is in this header and
@@ -267,11 +327,12 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
    */
   async function requestPayment(e: React.FormEvent) {
     e.preventDefault()
+    if (!quote) return
     setBusy(true)
     setError(null)
     setChallenge(null)
     try {
-      const res = await fetch(`${API}/spots/${selected}`, {
+      const res = await fetch(`${API}/spots/${quote.spot}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ track_uri: track, term, network, buyer: 'demo-ui' }),
@@ -280,9 +341,8 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
       if (res.status === 402) {
         setChallenge({ status: res.status, body: data })
       } else if (!res.ok) {
-        const next = data.next_free_spot
-        setError(`${data.error?.message ?? data.message ?? 'Request failed'}${next ? ` — next free spot is ${next}` : ''}`)
-        if (next) setSpot(String(next))
+        setError(data.error?.message ?? data.message ?? 'Request failed')
+        if (tier) await quoteTier(tier, term)
       } else {
         // Only reachable when a payment was attached, which this page cannot do.
         setChallenge({ status: res.status, body: data })
@@ -366,19 +426,49 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
           )}
           {!trackInfo && trackBusy && <p style={S.fine}>Looking up track…</p>}
           {trackErr && <p style={S.error}>{trackErr}</p>}
+          {/*
+            Four prices, not a hundred numbers. The buyer chooses what to pay;
+            the server decides which slot that buys, so the expensive tiers can
+            be skipped without hunting through a grid for a free cheap one.
+          */}
+          <div style={S.label}>
+            Pick a tier
+            <div style={S.tiers}>
+              {(playlist?.pricing.tiers ?? []).map((t) => {
+                const left = playlist ? remainingIn(t, playlist) : 0
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTier(t.id)}
+                    disabled={left === 0}
+                    className={`tier ${tier === t.id ? 'on' : ''}`}
+                    title={`${t.label} — spots ${t.from}-${t.to}`}
+                  >
+                    <b>{t.label}</b>
+                    <span>{t.price} USDC</span>
+                    <small>{left === 0 ? 'sold out' : `${left} left of ${t.to - t.from + 1}`}</small>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <p style={S.fine}>You pick the price. We give you the next open slot in that tier.</p>
+
           <div style={S.row}>
-            <label style={{ ...S.label, flex: '1 1 8rem' }}>
-              Spot
-              <input
-                type="number"
-                min={1}
-                max={playlist?.spots_per_cycle ?? 100}
-                value={spot}
-                onChange={(e) => setSpot(e.target.value)}
-                style={S.input}
-                required
-              />
-            </label>
+            <div style={{ ...S.label, flex: '2 1 14rem' }}>
+              Your slot
+              <div style={{ ...S.input, ...S.slot }}>
+                {tierFull
+                  ? 'This tier is full.'
+                  : quoting && !quote
+                    ? 'Quoting…'
+                    : quote
+                      ? `Slot ${quote.spot} · ${quote.price.amount} USDC`
+                      : '—'}
+              </div>
+            </div>
             <label style={{ ...S.label, flex: '1 1 8rem' }}>
               Term
               <select value={term} onChange={(e) => setTerm(e.target.value)} style={S.input}>
@@ -389,19 +479,23 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
                 ))}
               </select>
             </label>
-            <div style={{ ...S.label, flex: '1 1 8rem' }}>
-              Total
-              <div style={{ ...S.input, ...S.total }}>{selectedTotal}</div>
-            </div>
           </div>
+
+          {requoted && <p style={S.notice}>{requoted}</p>}
           <div style={S.actions}>
-            <button type="submit" disabled={paying || busy} style={S.button}>
-              {paying ? 'Waiting for your wallet…' : wallet ? `Buy spot ${selected} — ${selectedTotal}` : 'Connect wallet & buy'}
+            <button type="submit" disabled={paying || busy || !canBuy} style={S.button}>
+              {tierFull
+                ? 'This tier is full'
+                : paying
+                  ? 'Waiting for your wallet…'
+                  : wallet
+                    ? `Buy this slot — ${selectedTotal}`
+                    : `Connect wallet & buy this slot — ${selectedTotal}`}
             </button>
-            <button type="button" onClick={() => setShowAgent((v) => !v)} style={S.buttonGhost}>
+            <button type="button" onClick={() => setShowAgent((v) => !v)} disabled={!canBuy} style={S.buttonGhost}>
               {showAgent ? 'Hide' : 'Hand this to an agent'}
             </button>
-            <button type="button" onClick={requestPayment} disabled={busy || paying} style={S.buttonGhostQuiet}>
+            <button type="button" onClick={requestPayment} disabled={busy || paying || !canBuy} style={S.buttonGhostQuiet}>
               {busy ? 'Requesting…' : 'Raw 402'}
             </button>
           </div>
@@ -414,7 +508,7 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
                 spot: selected,
                 term,
                 trackUri: trackInfo?.uri ?? track,
-                price: String(Number(priceOf(selected)) * multiplier),
+                price: amount ?? '0',
               }}
             />
           )}
@@ -423,7 +517,7 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
             <p style={S.fine}>
               Paying from <Code>{`${wallet.slice(0, 6)}…${wallet.slice(-4)}`}</Code>
               {balance !== null && <> · {balance} USDC on Base Sepolia</>}
-              {balance !== null && balance < Number(priceOf(selected)) * multiplier && (
+              {balance !== null && amount !== null && balance < Number(amount) && (
                 <span style={S.warn}> — not enough for this spot</span>
               )}
               . You sign an authorization, not a transaction: no ETH, no gas.
@@ -506,40 +600,6 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
         )}
       </section>
 
-      <section style={S.card}>
-        <div style={S.legendRow}>
-          <h2 style={S.h2}>100 spots</h2>
-          <div style={S.legend}>
-            {(playlist?.pricing.tiers ?? []).map((t) => (
-              <span key={t.from} style={S.legendItem}>
-                <i className={`sw t${t.price}`} /> {t.price} USDC
-              </span>
-            ))}
-            <span style={S.legendItem}>
-              <i className="sw taken" /> taken
-            </span>
-          </div>
-        </div>
-        <div className="grid">
-          {Array.from({ length: playlist?.spots_per_cycle ?? 100 }, (_, i) => i + 1).map((n) => {
-            const taken = takenSet.has(n)
-            return (
-              <button
-                key={n}
-                type="button"
-                onClick={() => !taken && setSpot(String(n))}
-                disabled={taken}
-                className={`spot t${priceOf(n)} ${taken ? 'taken' : ''} ${selected === n ? 'sel' : ''}`}
-                title={taken ? `Spot ${n} — taken` : `Spot ${n} — ${priceOf(n)} USDC`}
-              >
-                <b>{n}</b>
-                <small>{taken ? '—' : priceOf(n)}</small>
-              </button>
-            )
-          })}
-        </div>
-      </section>
-
       <footer style={S.footer}>
         For agents:{' '}
         {['/agents', '/api/v1/playlists/demo', '/api/v1/playlists/demo/quote?next=1', '/llms.txt', '/.well-known/agent.json'].map(
@@ -552,6 +612,16 @@ export default function Demo({ selectedSpot }: { selectedSpot?: number }) {
       </footer>
     </main>
   )
+}
+
+/** How many spots in a band are still free, from the playlist we already hold. */
+function remainingIn(tier: Tier, playlist: Playlist): number {
+  const taken = new Set(playlist.sold.map((s) => s.spot))
+  let free = 0
+  for (let spot = tier.from; spot <= Math.min(tier.to, playlist.spots_per_cycle); spot += 1) {
+    if (!taken.has(spot)) free += 1
+  }
+  return free
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -579,18 +649,18 @@ function Row({ k, v }: { k: string; v: string }) {
 const CSS = `
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.4rem, 1fr)); gap: .35rem; }
 .spot { display:flex; flex-direction:column; align-items:center; gap:.1rem; padding:.4rem .2rem;
-  border:1px solid transparent; border-radius:2px; background:${LINE}; cursor:pointer;
-  font-family:${MONO}; color:${INK}; transition:transform .12s ease; }
+  border:1px solid transparent; border-radius:2px; background:${LINE};
+  font-family:${MONO}; color:${INK}; }
 .spot b { font-size:.8rem; font-weight:500; }
 .spot small { font-size:.62rem; opacity:.7; }
-.spot:hover:not(:disabled) { transform:translateY(-2px); }
+.spot { user-select:none; }
 .spot.sel { outline:2px solid ${INK}; outline-offset:2px; }
 .spot.t10 { background:${INK}; color:${BG}; }
 .spot.t5 { background:${ACCENT}; color:#FFFFFF; }
 .spot.t3 { background:color-mix(in oklch, ${ACCENT} 36%, ${BG}); color:${INK}; }
 .spot.taken, .spot.taken.t10, .spot.taken.t5, .spot.taken.t3 {
   background:transparent; color:${DIM}; border:1px dashed #4A473F;
-  cursor:not-allowed; text-decoration:line-through; }
+  text-decoration:line-through; }
 .sw { display:inline-block; width:.7rem; height:.7rem; border-radius:2px; vertical-align:middle; }
 .sw.t10 { background:${INK}; } .sw.t5 { background:${ACCENT}; }
 .sw.t3 { background:color-mix(in oklch, ${ACCENT} 36%, ${BG}); }
@@ -602,6 +672,16 @@ const CSS = `
 .net:hover { border-color:${INK}; }
 .net.on { border-color:${ACCENT}; background:color-mix(in oklch, ${ACCENT} 14%, transparent); }
 .net.on small { color:${ACCENT}; }
+.tier { display:flex; flex-direction:column; align-items:flex-start; gap:.15rem; min-width:7.5rem;
+  padding:.65rem .85rem; border:1px solid ${LINE_2}; border-radius:2px; background:transparent;
+  font:inherit; color:${INK}; cursor:pointer; text-align:left; transition:border-color .15s ease; }
+.tier b { font-size:.95rem; font-weight:700; letter-spacing:-0.02em; }
+.tier span { font-family:${MONO}; font-size:.82rem; }
+.tier small { font-family:${MONO}; font-size:.6rem; letter-spacing:.08em; text-transform:uppercase; color:${MUTED}; }
+.tier:hover:not(:disabled) { border-color:${INK}; }
+.tier.on { border-color:${ACCENT}; background:color-mix(in oklch, ${ACCENT} 14%, transparent); }
+.tier.on small { color:${ACCENT}; }
+.tier:disabled { opacity:.45; cursor:not-allowed; text-decoration:line-through; }
 .dm input, .dm select { color-scheme: dark; }
 .dm input:focus, .dm select:focus { outline:none; border-color:${ACCENT}; }
 .dm ::placeholder { color:${DIM}; }
@@ -624,6 +704,9 @@ const S: Record<string, React.CSSProperties> = {
   label: { display: 'flex', flexDirection: 'column', gap: '.35rem', font: `10px ${MONO}`, letterSpacing: '.14em', textTransform: 'uppercase', color: MUTED },
   input: { padding: '.6rem .7rem', border: `1px solid ${LINE_2}`, borderRadius: 2, fontFamily: 'inherit', fontSize: '.9rem', letterSpacing: 'normal', textTransform: 'none', color: INK, background: BG },
   total: { display: 'flex', alignItems: 'center', fontFamily: MONO, fontSize: '1rem', background: 'transparent', borderColor: LINE },
+  slot: { display: 'flex', alignItems: 'center', fontFamily: MONO, fontSize: '1rem', background: 'transparent', borderColor: LINE_2, color: INK },
+  tiers: { display: 'flex', flexWrap: 'wrap', gap: '.5rem' },
+  notice: { margin: 0, padding: '10px 14px', borderRadius: 3, background: `color-mix(in oklch, ${WARN} 12%, ${BG})`, border: `1px solid color-mix(in oklch, ${WARN} 30%, ${BG})`, color: INK, fontSize: '.85rem' },
   button: { alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 10, padding: '14px 24px', border: 0, borderRadius: 2, background: ACCENT, color: '#FFFFFF', font: 'inherit', fontSize: 15, fontWeight: 700, letterSpacing: '-0.015em', cursor: 'pointer' },
   fine: { margin: 0, font: `11px ${MONO}`, lineHeight: 1.7, color: MUTED },
   actions: { display: 'flex', gap: '.5rem', flexWrap: 'wrap' },

@@ -8,7 +8,18 @@
 
 export type Term = 'cycle' | '3m' | '1y'
 
+/**
+ * Tiers are what a person picks from. Spot numbers stay the unit of inventory —
+ * a receipt and the API still talk in numbers — but a buyer chooses a price
+ * band and gets the first free spot inside it.
+ */
+export type TierId = 'top' | 'front' | 'mid' | 'shelf'
+
 export type Tier = {
+  /** stable id a client selects by: ?tier=mid */
+  id: TierId
+  /** human label for the band */
+  label: string
   /** first spot number in this tier, inclusive */
   from: number
   /** last spot number in this tier, inclusive */
@@ -25,11 +36,21 @@ export const USDC_DECIMALS = 6
 
 /** Default tier ladder. Editable per cycle. */
 export const TIERS: Tier[] = [
-  { from: 1, to: 1, price: '10' },
-  { from: 2, to: 3, price: '5' },
-  { from: 4, to: 10, price: '3' },
-  { from: 11, to: 100, price: '1' },
+  { id: 'top', label: 'Top', from: 1, to: 1, price: '10' },
+  { id: 'front', label: 'Front', from: 2, to: 3, price: '5' },
+  { id: 'mid', label: 'Mid', from: 4, to: 10, price: '3' },
+  { id: 'shelf', label: 'Shelf', from: 11, to: 100, price: '1' },
 ]
+
+export function isTierId(value: string): value is TierId {
+  return TIERS.some((t) => t.id === value)
+}
+
+export function tierById(id: TierId): Tier {
+  const tier = TIERS.find((t) => t.id === id)
+  if (!tier) throw new Error(`no tier configured with id ${id}`)
+  return tier
+}
 
 /** Term multipliers. Editable per cycle. */
 export const TERM_MULTIPLIERS: Record<Term, number> = {
